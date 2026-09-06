@@ -20,6 +20,8 @@ final class ScoreEditorState: ObservableObject {
     }
     @Published var string = 1
     @Published var tick = 0
+    @Published private(set) var hasEditingSelection = true
+    @Published private(set) var playbackPositionTick = 0
     @Published var rhythm = Rhythm()
     @Published var technique: GuitarTechnique = .none
     @Published var targetFret = 5
@@ -46,14 +48,38 @@ final class ScoreEditorState: ObservableObject {
     private var pendingDigit: (digit: Int, time: TimeInterval, measure: Int, voice: ScoreVoice, string: Int, tick: Int)?
     var score: GuitarScore { pendingScore ?? binding?.wrappedValue.score ?? GuitarScore() }
     var absoluteTick: Int { measureIndex * score.timeSignature.ticks + tick }
-    var selectedEvent: ScoreEvent? { score.measures[safe: measureIndex]?.events(for: voice).first { $0.startTick == tick } }
+    var selectedEvent: ScoreEvent? {
+        guard hasEditingSelection else { return nil }
+        return score.measures[safe: measureIndex]?.events(for: voice).first { $0.startTick == tick }
+    }
     var selectedNote: GuitarNote? { selectedEvent?.notes.first { $0.string == string } }
     var issues: [ScoreIssue] { ScoreValidator.validate(score) }
+    /// The audio clock belongs to this window only during its score transport.
+    /// Preview notes and another document never replace its stored start point.
+    var displayTick: Int {
+        if let audio, audio.ownerID == owner, audio.isPlaying || audio.isPaused {
+            return boundedPlaybackTick(audio.currentTick)
+        }
+        return boundedPlaybackTick(playbackPositionTick)
+    }
+
+    private func boundedPlaybackTick(_ value: Int) -> Int {
+        min(max(0, value), max(0, score.totalTicks - 1))
+    }
 
     func playbackNotes(at absoluteTick: Int, mutedVoices: Set<ScoreVoice>) -> [GuitarNote] {
         ScoreScheduler.notes(score).filter {
             !mutedVoices.contains($0.voice) && $0.startTick <= absoluteTick && absoluteTick < $0.endTick
         }.map(\.note)
+    }
+
+    func audition(string: Int, fret: Int) {
+        guard let audio else { return }
+        if audio.ownerID == owner {
+            if audio.isPlaying { audio.pause() }
+            playbackPositionTick = boundedPlaybackTick(audio.currentTick)
+        }
+        audio.preview(notes: [GuitarNote(string: string, fret: fret)], tuning: score.tuning, owner: auditionOwner)
     }
 
     func connect(_ binding: Binding<GuitarScoreDocument>, undoManager: UndoManager?, audio: AudioService,
@@ -120,6 +146,7 @@ final class ScoreEditorState: ObservableObject {
 
     private func restore(_ updated: GuitarScore, name: String) {
         let old = score
+        let retainedPosition = displayTick
         logUndo("register " + name)
         undoManager?.registerUndo(withTarget: self) { target in target.restore(old, name: name) }
         undoManager?.setActionName(name)
@@ -128,6 +155,7 @@ final class ScoreEditorState: ObservableObject {
         binding?.wrappedValue.score = updated
         measureIndex = min(measureIndex, max(0, updated.measures.count - 1))
         tick = min(tick, updated.timeSignature.ticks - 1)
+        playbackPositionTick = boundedPlaybackTick(hasEditingSelection ? absoluteTick : retainedPosition)
         loopStart = min(max(1, loopStart), updated.measures.count)
         loopEnd = min(max(loopStart, loopEnd), updated.measures.count)
         synchronizeSelectionProperties()
@@ -141,7 +169,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     private func editEvents(name: String, _ edit: (inout [ScoreEvent]) -> Void) {
-        guard score.measures.indices.contains(measureIndex) else { return }
+        guard hasEditingSelection, score.measures.indices.contains(measureIndex) else { return }
         var candidate = score
         guard let track = candidate.measures[measureIndex].voices.firstIndex(where: { $0.voice == voice }) else { return }
         edit(&candidate.measures[measureIndex].voices[track].events)
@@ -150,35 +178,59 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func select(measure: Int, string: Int, tick: Int) {
+        guard !score.measures.isEmpty else { return }
         measureIndex = min(max(0, measure), score.measures.count - 1)
         self.string = min(max(1, string), 6)
         self.tick = min(max(0, tick), score.timeSignature.ticks - 1)
+        hasEditingSelection = true
+        playbackPositionTick = absoluteTick
         pendingDigit = nil
         synchronizeSelectionProperties()
+        if let audio, audio.ownerID == owner {
+            if audio.isPlaying { audio.pause() }
+            audio.seek(to: playbackPositionTick)
+        }
+        keyboardFocusToken = UUID()
+    }
+
+    func clearSelection() {
+        hasEditingSelection = false
+        pendingDigit = nil
         keyboardFocusToken = UUID()
     }
 
     func selectTime(measure: Int, string: Int, approximateTick: Int, tolerance: Int) {
+        guard !score.measures.isEmpty else { return }
         let index = min(max(0, measure), score.measures.count - 1)
+        let position = editingTick(measure: index, approximateTick: approximateTick, tolerance: tolerance)
+        select(measure: index, string: string, tick: position)
+    }
+
+    private func editingTick(measure index: Int, approximateTick: Int, tolerance: Int) -> Int {
         let events = score.measures[index].events(for: voice)
         let closest = events.min { abs($0.startTick - approximateTick) < abs($1.startTick - approximateTick) }
         if let closest, abs(closest.startTick - approximateTick) < tolerance {
-            select(measure: index, string: string, tick: closest.startTick)
-            return
+            return closest.startTick
         }
         let step = rhythm.ticks
         let lastGridTick = max(0, (score.timeSignature.ticks - step) / step) * step
         let snapped = Int((Double(approximateTick) / Double(step)).rounded()) * step
-        select(measure: index, string: string, tick: min(lastGridTick, max(0, snapped)))
+        return min(lastGridTick, max(0, snapped))
     }
 
     /// Audio may seek between notes, while subsequent recording stays on the
     /// current rhythm grid and always leaves room for a complete event.
     @discardableResult
     func locatePlayback(at requestedTick: Int) -> Int {
-        let bounded = min(max(0, requestedTick), max(0, score.totalTicks - 1))
-        selectTime(measure: bounded / score.timeSignature.ticks, string: string,
-                   approximateTick: bounded % score.timeSignature.ticks, tolerance: 0)
+        let bounded = boundedPlaybackTick(requestedTick)
+        playbackPositionTick = bounded
+        // Keep a legal insertion grid ready without making it an active selection.
+        if !score.measures.isEmpty {
+            measureIndex = bounded / score.timeSignature.ticks
+            tick = editingTick(measure: measureIndex, approximateTick: bounded % score.timeSignature.ticks, tolerance: 0)
+        }
+        clearSelection()
+        if let audio, audio.ownerID == owner { audio.seek(to: bounded) }
         return bounded
     }
 
@@ -188,6 +240,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func insertDigit(_ digit: Int) {
+        guard hasEditingSelection else { return }
         let now = Date.timeIntervalSinceReferenceDate
         var fret = digit
         if let pending = pendingDigit, now - pending.time < 0.8,
@@ -280,8 +333,15 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func move(horizontal: Int = 0, vertical: Int = 0) {
+        guard !score.measures.isEmpty else { return }
         let nextString = min(6, max(1, string + vertical))
         var position = absoluteTick
+        if !hasEditingSelection {
+            // First arrow returns to editing at the current transport location.
+            selectTime(measure: displayTick / score.timeSignature.ticks, string: nextString,
+                       approximateTick: displayTick % score.timeSignature.ticks, tolerance: 0)
+            return
+        }
         if horizontal != 0 {
             let amount = selectedEvent?.rhythm.ticks ?? rhythm.ticks
             let next = absoluteTick + horizontal * amount
@@ -297,9 +357,11 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func deleteMeasure() {
+        guard hasEditingSelection else { return }
         guard score.measures.count > 1 else { error = "曲谱至少需要一个小节。"; return }
         editScore(name: "删除小节") { $0.measures.remove(at: measureIndex) }
         tick = 0
+        playbackPositionTick = absoluteTick
     }
 
     func copy() {
@@ -315,6 +377,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func paste() {
+        guard hasEditingSelection else { return }
         let data = NSPasteboard.general.data(forType: .init("com.guitarget.event")) ?? NSPasteboard.general.string(forType: .string)?.data(using: .utf8)
         guard let data, var event = try? JSONDecoder().decode(ScoreEvent.self, from: data) else {
             error = "剪贴板中没有可粘贴的六线谱事件。"; return
@@ -327,17 +390,47 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func applyTransportSettings() {
-        audio?.loopRange = loopEnabled ? (max(0, loopStart - 1) * score.timeSignature.ticks)..<(min(score.measures.count, max(loopStart, loopEnd)) * score.timeSignature.ticks) : nil
+        guard let audio, audio.ownerID == nil || audio.ownerID == owner else { return }
+        audio.loopRange = loopEnabled ? (max(0, loopStart - 1) * score.timeSignature.ticks)..<(min(score.measures.count, max(loopStart, loopEnd)) * score.timeSignature.ticks) : nil
     }
 
     func playPause() {
         guard let audio else { return }
-        if audio.ownerID == owner, audio.isPlaying { audio.pause() }
-        else if audio.ownerID == owner, audio.isPaused { audio.resume() }
-        else {
-            if let issue = issues.first(where: { $0.severity == .error }) { error = issue.message; return }
-            applyTransportSettings(); audio.play(score: score, owner: owner, fromTick: absoluteTick)
+        if audio.ownerID == owner, audio.isPlaying {
+            audio.pause()
+            playbackPositionTick = boundedPlaybackTick(audio.currentTick)
+            return
         }
+        guard canStartPlayback else { return }
+        if audio.ownerID == owner, audio.isPaused { audio.resume() }
+        else {
+            // An explicit play action takes ownership before installing this
+            // document's loop settings, so it cannot rebuild another score.
+            audio.stop()
+            applyTransportSettings()
+            audio.play(score: score, owner: owner, fromTick: boundedPlaybackTick(playbackPositionTick))
+        }
+        if audio.ownerID == owner, audio.isPlaying { clearSelection() }
+    }
+
+    func playFrom(tick: Int) {
+        guard let audio, canStartPlayback else { return }
+        let position = boundedPlaybackTick(tick)
+        audio.stop()
+        applyTransportSettings()
+        audio.play(score: score, owner: owner, fromTick: position)
+        if audio.ownerID == owner, audio.isPlaying {
+            playbackPositionTick = position
+            clearSelection()
+        }
+    }
+
+    private var canStartPlayback: Bool {
+        if let issue = issues.first(where: { $0.severity == .error }) {
+            error = issue.message
+            return false
+        }
+        return true
     }
 
     func handleKey(_ event: NSEvent) -> Bool {
@@ -357,6 +450,7 @@ final class ScoreEditorState: ObservableObject {
         case 126: move(vertical: -1); return true
         case 51, 117: delete(); return true
         case 49: playPause(); return true
+        case 53: clearSelection(); return true
         case 48: voice = voice == .melody ? .bass : .melody; return true
         case 36: move(horizontal: 1); return true
         default: break

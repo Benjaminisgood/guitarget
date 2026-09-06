@@ -59,7 +59,7 @@ struct ScoreLibraryView: View {
             HStack(alignment:.top,spacing:24) {
                 LearningCard(title:"鼠标 + 键盘",icon:"keyboard") {
                     Text("点击弦与时间位置 → 数字键输入品位 → 方向键移动。")
-                    Text("0–24 品 · 附点 · 三连音 · 两个声部\n复制粘贴、撤销重做与原生保存均可用。").font(.callout).foregroundStyle(.secondary)
+                    Text("0–24 品、附点、三连音、两声部、复制粘贴、撤销重做与原生保存。").font(.callout).foregroundStyle(.secondary)
                 }
                 LearningCard(title:"开放的曲谱文件",icon:"curlybraces") {
                     Text(".guitarget 是带版本号的 JSON 文档。")

@@ -1,0 +1,7 @@
+.venv/
+.build/
+.cache/
+.runtime/
+__pycache__/
+tests/__pycache__/
+reports/

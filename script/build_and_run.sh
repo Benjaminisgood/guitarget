@@ -22,10 +22,8 @@ BUILD_BINARY="$(swift build --show-bin-path)/Guitarget"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$BUILD_BINARY" "$APP_BUNDLE/Contents/MacOS/Guitarget"
 cp "$ROOT_DIR/script/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
-if [ -f "$ROOT_DIR/script/Guitarget.icns" ]; then
-  cp "$ROOT_DIR/script/Guitarget.icns" "$APP_BUNDLE/Contents/Resources/"
-fi
-codesign --force --deep --sign - "$APP_BUNDLE"
+cp "$ROOT_DIR/script/Guitarget.icns" "$APP_BUNDLE/Contents/Resources/"
+bash "$ROOT_DIR/script/finalize_app_bundle.sh" "$APP_BUNDLE"
 case "$MODE" in
   --build-only) ;;
   run) /usr/bin/open "$APP_BUNDLE" ;;

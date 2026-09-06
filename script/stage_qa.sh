@@ -23,7 +23,7 @@ cp script/Guitarget.icns "$QA_BUNDLE/Contents/Resources/"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleName Guitarget QA' "$QA_BUNDLE/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName Guitarget QA' "$QA_BUNDLE/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleDocumentTypes:0:LSHandlerRank Alternate' "$QA_BUNDLE/Contents/Info.plist"
-codesign --force --deep --sign - "$QA_BUNDLE"
+bash script/finalize_app_bundle.sh "$QA_BUNDLE"
 if [ "${1:-}" = "--system-isolation-smoke" ]; then
   bash script/stage_audio_test_source.sh
   open "$QA_BUNDLE" --args "--system-isolation-smoke=$PWD/artifacts/system-isolation-bundled" "--system-isolation-player=$PWD/artifacts/Audio Test Source.app/Contents/MacOS/AudioTestSource"

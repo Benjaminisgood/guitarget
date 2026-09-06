@@ -390,6 +390,45 @@ func runScoreEditorChecks() throws -> [String] {
     try expect(voiceEditor.rhythm.value == .whole && voiceEditor.technique == .palmMute, "切换声部后未同步所选低音的时值与技巧")
     passed.append("切换声部：已有整音低音同步时值及闷音技巧")
 
+    let selectionStore = Store()
+    let selectionEditor = ScoreEditorState()
+    selectionEditor.refreshDocumentBinding(Binding(get: { selectionStore.document }, set: { selectionStore.document = $0 }))
+    selectionEditor.select(measure: 0, string: 1, tick: 960)
+    selectionEditor.insertDigit(1)
+    selectionEditor.copy()
+    let selectedScore = selectionEditor.score
+    selectionEditor.clearSelection()
+    try expect(!selectionEditor.hasEditingSelection && selectionEditor.selectedEvent == nil && selectionEditor.selectedNote == nil,
+               "退出编辑后仍暴露旧事件或旧音符")
+    try expect(selectionEditor.playbackPositionTick == 960 && selectionEditor.displayTick == 960,
+               "退出编辑丢失了所选播放位置")
+    let clipboardChangeCount = NSPasteboard.general.changeCount
+    selectionEditor.insertDigit(2)
+    selectionEditor.insertFret(5)
+    selectionEditor.insertRest()
+    selectionEditor.delete()
+    selectionEditor.cut()
+    selectionEditor.paste()
+    selectionEditor.updateLyric("不应写入")
+    selectionEditor.updateSelectedNote({ $0.fret = 7 }, name: "无选择时不得修改音符")
+    selectionEditor.updateRhythm(Rhythm(.eighth))
+    selectionEditor.applyTechnique(.vibrato)
+    try expect(selectionEditor.score == selectedScore && NSPasteboard.general.changeCount == clipboardChangeCount,
+               "无编辑选择时的录入、删除、剪贴或检查器操作修改了旧音符")
+    selectionEditor.refreshDocumentBinding(Binding(get: { selectionStore.document }, set: { selectionStore.document = $0 }))
+    try expect(!selectionEditor.hasEditingSelection && selectionEditor.selectedEvent == nil,
+               "文档重新连接重新激活了已取消的编辑选择")
+    for _ in 0..<3 {
+        selectionEditor.select(measure: 0, string: 1, tick: 960)
+        try expect(selectionEditor.hasEditingSelection && selectionEditor.displayTick == 960 && selectionEditor.selectedNote?.fret == 1,
+                   "重复点击同一位置没有重新激活编辑选择或移动播放位置")
+        selectionEditor.clearSelection()
+    }
+    selectionEditor.select(measure: 0, string: 1, tick: 960)
+    selectionEditor.insertDigit(2)
+    try expect(selectionEditor.selectedNote?.fret == 2, "退出编辑后仍与旧数字拼接为两位品位")
+    passed.append("编辑选择：取消后保留播放位置并阻止旧位置写入，同点重复选择有效且不拼接旧数字")
+
     let entryRhythms = [Rhythm(.quarter), Rhythm(.eighth, dotted: true), Rhythm(.eighth, triplet: true), Rhythm(.thirtySecond)]
     for signature in TimeSignature.supported {
         for rhythm in entryRhythms {
@@ -401,14 +440,26 @@ func runScoreEditorChecks() throws -> [String] {
             locationEditor.rhythm = rhythm
             let audioTick = locationEditor.locatePlayback(at: locationStore.document.score.totalTicks - 1)
             try expect(audioTick == locationStore.document.score.totalTicks - 1, "滑块丢失精确音频定位")
+            try expect(!locationEditor.hasEditingSelection && locationEditor.displayTick == audioTick && locationEditor.playbackPositionTick == audioTick,
+                       "滑块定位未退出编辑，或精确音频位置被录入网格覆盖")
             try expect(locationEditor.measureIndex == 1 && locationEditor.tick % rhythm.ticks == 0 && locationEditor.tick + rhythm.ticks <= signature.ticks,
                        "\(signature.title) 小节末尾录入光标未落在能容纳当前时值的网格")
+            locationEditor.insertFret(12)
+            try expect(locationStore.document.score.measures[1].events(for: .melody).isEmpty,
+                       "滑块定位后未重新选择就写入了音符")
+            locationEditor.select(measure: locationEditor.measureIndex, string: locationEditor.string, tick: locationEditor.tick)
             locationEditor.insertFret(12)
             try expect(locationEditor.error == nil && locationEditor.selectedNote?.fret == 12, "小节末尾定位后无法录入完整音符")
             try expect(locationStore.document.score.measures[0].events(for: .melody).isEmpty, "末尾定位修改了另一小节")
         }
     }
-    passed.append("滑块末尾定位：保留音频 tick，四种拍号的附点/三连音/32分录入均在合法网格")
+    passed.append("滑块末尾定位：保留精确音频位置并退出编辑，重新选择后四种拍号的附点/三连音/32分录入均在合法网格")
+
+    _ = selectionEditor.locatePlayback(at: 1501)
+    selectionEditor.move(vertical: 1)
+    try expect(selectionEditor.hasEditingSelection && selectionEditor.string == 2 && selectionEditor.tick == 1920 && selectionEditor.displayTick == 1920,
+               "方向键未从当前播放位置的合法网格恢复编辑")
+    passed.append("方向键：从播放位置恢复编辑并采用合法录入网格")
 
     let denseEvents = (0..<32).map { ScoreEvent(startTick: $0 * 120, rhythm: Rhythm(.thirtySecond), notes: [GuitarNote(string: 1, fret: 12)]) }
     let denseMeasure = ScoreMeasure(voices: [VoiceTrack(voice: .melody, events: denseEvents), VoiceTrack(voice: .bass)])
@@ -442,6 +493,54 @@ func runScoreEditorChecks() throws -> [String] {
     try expect(ScoreNotationSpacing.focusOffset(tick: 1920, capacity: 3840, contentWidth: 360, viewportWidth: 720) == 0,
                "完整可见的紧凑小节不应产生横向偏移")
     passed.append("密集谱定位：起始偏移为零，逐音与末音定位保留完整品位和技巧，紧凑谱不横移")
+
+    let layoutScale: CGFloat = 1.8
+    let sixteenthEvents = (0..<16).map { ScoreEvent(startTick: $0 * 240, rhythm: Rhythm(.sixteenth), notes: [GuitarNote(string: 1, fret: 12)]) }
+    let sixteenthMeasure = ScoreMeasure(voices: [VoiceTrack(voice: .melody, events: sixteenthEvents), VoiceTrack(voice: .bass)])
+    let sixteenthWidth = CGFloat(ScoreNotationSpacing.minimumWidth(measure: sixteenthMeasure, capacity: 3840)) * layoutScale
+    for viewport: CGFloat in [1500, 1190] {
+        let available = viewport - 44
+        try expect(ScoreMeasureLayout.columnCount(availableWidth: available, preferredCount: 0, minimumMeasureWidth: sixteenthWidth) == 1,
+                   "1.8倍密集16分谱在\(Int(viewport))宽下被自动分成多列")
+        try expect(ScoreMeasureLayout.columnCount(availableWidth: available, preferredCount: 2, minimumMeasureWidth: sixteenthWidth) == 2,
+                   "显式每行两小节被自动宽度策略覆盖")
+    }
+    for available: CGFloat in [0, 500, 1500, 4000] {
+        try expect(ScoreMeasureLayout.columnCount(availableWidth: available, preferredCount: 1, minimumMeasureWidth: sixteenthWidth) == 1,
+                   "显式每行一小节随窗口宽度变化")
+        try expect(ScoreMeasureLayout.columnCount(availableWidth: available, preferredCount: 4, minimumMeasureWidth: sixteenthWidth) == 4,
+                   "显式每行四小节未保持选择")
+    }
+    let simpleWidth = CGFloat(ScoreNotationSpacing.minimumWidth(measure: ScoreMeasure(), capacity: 3840)) * layoutScale
+    try expect(ScoreMeasureLayout.columnCount(availableWidth: 1500 - 44, preferredCount: 0, minimumMeasureWidth: simpleWidth) == 2
+               && ScoreMeasureLayout.columnCount(availableWidth: 1190 - 44, preferredCount: 0, minimumMeasureWidth: simpleWidth) == 1,
+               "简单谱自动分列没有随真实可用宽度从两列变为一列")
+    try expect(ScoreMeasureLayout.columnCount(availableWidth: 1500 - 44, preferredCount: 3, minimumMeasureWidth: simpleWidth) == 2
+               && ScoreMeasureLayout.columnCount(availableWidth: -1, preferredCount: 0, minimumMeasureWidth: simpleWidth) == 1
+               && ScoreMeasureLayout.columnCount(availableWidth: 10000, preferredCount: 0, minimumMeasureWidth: simpleWidth) == 4,
+               "无效列数、负宽度或极宽窗口没有回到一至四列的自动策略")
+    passed.append("谱面分列：1.8倍密集16分谱自动单列，简单谱随宽度两列/单列切换，显式1/2/4列保持不变")
+
+    for unscaledWidth in [CGFloat(denseWidth), CGFloat(markedWidth)] {
+        let width = unscaledWidth * layoutScale
+        for viewport: CGFloat in [360, 720] {
+            try expect(ScoreNotationSpacing.focusOffset(tick: 0, capacity: 3840, contentWidth: width, viewportWidth: viewport, scale: layoutScale) == 0,
+                       "1.8倍谱面初始音没有保持左端")
+            for event in markedEvents {
+                let offset = ScoreNotationSpacing.focusOffset(tick: event.startTick, capacity: 3840, contentWidth: width, viewportWidth: viewport, scale: layoutScale)
+                let glyphX = 38 * layoutScale + CGFloat(event.startTick) / 3840 * (width - 60 * layoutScale) - offset
+                try expect(offset >= 0 && offset <= width - viewport && glyphX - 12 * layoutScale >= 0 && glyphX + 34 * layoutScale <= viewport,
+                           "1.8倍谱面定位未完整保留\(event.startTick) ticks音符和技巧的缩放边界")
+            }
+            let middleOffset = ScoreNotationSpacing.focusOffset(tick: 1920, capacity: 3840, contentWidth: width, viewportWidth: viewport, scale: layoutScale)
+            let middleGlyphX = 38 * layoutScale + (width - 60 * layoutScale) / 2 - middleOffset
+            try expect(abs(middleGlyphX - viewport / 2) < 0.001,
+                       "1.8倍居中定位仍使用未缩放的左右留白")
+        }
+    }
+    try expect(ScoreNotationSpacing.focusOffset(tick: 1920, capacity: 3840, contentWidth: simpleWidth, viewportWidth: 720, scale: layoutScale) == 0,
+               "1.8倍紧凑小节完整可见时仍产生横移")
+    passed.append("1.8倍谱面定位：首音左对齐、居中使用缩放留白，逐音及末音数字和技巧完整可见")
     return passed
 }
 

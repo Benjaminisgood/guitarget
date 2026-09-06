@@ -69,6 +69,7 @@ final class GuitargetAppDelegate: NSObject, NSApplicationDelegate {
                     var checks = try runScoreEditorChecks()
                     checks.append(try runScoreLibraryChecks())
                     checks.append(try await runScoreEditorDelayedUndoCheck())
+                    checks.append(contentsOf: try await runScoreTransportChecks())
                     let audioResult = try AudioDiagnostics.run(outputDirectory: output.deletingLastPathComponent())
                     checks.append(try await runReferenceAudioChecks(sourceURL: output.deletingLastPathComponent().appendingPathComponent("reference-a4.wav")))
                     result["checks"] = checks

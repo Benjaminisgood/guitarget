@@ -5,9 +5,10 @@ import GuitarCore
 /// Horizontal ink bounds shared by rendering and the measure viewport. A chord
 /// occupies one onset; close onsets need enough room for digits, flags and marks.
 enum ScoreNotationSpacing {
-    static func focusOffset(tick: Int, capacity: Int, contentWidth: CGFloat, viewportWidth: CGFloat) -> CGFloat {
-        guard capacity > 0, viewportWidth > 0, contentWidth > viewportWidth else { return 0 }
-        let x = 38 + CGFloat(min(max(0, tick), capacity)) / CGFloat(capacity) * (contentWidth - 60)
+    static func focusOffset(tick: Int, capacity: Int, contentWidth: CGFloat, viewportWidth: CGFloat, scale: CGFloat = 1) -> CGFloat {
+        guard capacity > 0, contentWidth.isFinite, viewportWidth.isFinite, viewportWidth > 0, contentWidth > viewportWidth else { return 0 }
+        let factor = scale.isFinite && scale > 0 ? scale : 1
+        let x = 38 * factor + CGFloat(min(max(0, tick), capacity)) / CGFloat(capacity) * (contentWidth - 60 * factor)
         return min(max(0, x - viewportWidth / 2), contentWidth - viewportWidth)
     }
 
@@ -98,7 +99,7 @@ struct ScoreNotationView: View {
                 if !events.isEmpty {
                     ScoreLyricLayout(startTicks: events.map(\.startTick), capacity: score.timeSignature.ticks) {
                         ForEach(events) { event in
-                            let selected = editor.measureIndex == measureIndex && editor.tick == event.startTick && editor.voice == voice
+                            let selected = editor.hasEditingSelection && editor.measureIndex == measureIndex && editor.tick == event.startTick && editor.voice == voice
                             let active = !mutedVoices.contains(voice) && (playingTick.map { $0 >= event.startTick && $0 < event.endTick } ?? false)
                             Button {
                                 editor.voice = voice
@@ -120,7 +121,10 @@ struct ScoreNotationView: View {
                 }
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background {
+            Color(nsColor: .textBackgroundColor).contentShape(Rectangle())
+                .onTapGesture { editor.clearSelection() }
+        }
     }
 
     private var staff: some View {
@@ -166,7 +170,7 @@ struct ScoreNotationView: View {
                 }
                 for event in events {
                     let x = xFor(event.startTick)
-                    let selected = editor.measureIndex == measureIndex && editor.tick == event.startTick && editor.voice == voice
+                    let selected = editor.hasEditingSelection && editor.measureIndex == measureIndex && editor.tick == event.startTick && editor.voice == voice
                     let active = !mutedVoices.contains(voice) && (playingTick.map { $0 >= event.startTick && $0 < event.endTick } ?? false)
                     if event.notes.isEmpty {
                         // The glyph encodes the base note value. Dots and triplet
@@ -226,7 +230,7 @@ struct ScoreNotationView: View {
                     }
                 }
             }
-            if editor.measureIndex == measureIndex {
+            if editor.hasEditingSelection && editor.measureIndex == measureIndex {
                 let x = xFor(editor.tick), y = top + CGFloat(editor.string - 1) * spacing
                 context.stroke(Path(roundedRect: CGRect(x: x - 12, y: y - 11, width: 26, height: 22), cornerRadius: 5), with: .color(.accentColor.opacity(0.9)), lineWidth: 1.8)
             }
@@ -242,16 +246,66 @@ struct ScoreNotationView: View {
         .overlay {
             GeometryReader { proxy in
                 Color.clear.contentShape(Rectangle()).onTapGesture { point in
-                    let relative = (point.x - 38) / (proxy.size.width - 60)
-                    let rawTick = min(score.timeSignature.ticks - 1, max(0, Int(relative * Double(score.timeSignature.ticks))))
-                    let tolerance = max(50, Int(Double(score.timeSignature.ticks) * 13 / Double(proxy.size.width - 60)))
-                    let string = min(6, max(1, Int(((point.y - top) / spacing).rounded()) + 1))
-                    editor.selectTime(measure: measureIndex, string: string, approximateTick: rawTick, tolerance: tolerance)
+                    selectNotation(at: point, width: proxy.size.width)
                 }
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("第 \(measureIndex + 1) 小节，\(score.measures[measureIndex].events(for: .melody).count) 个旋律事件，\(score.measures[measureIndex].events(for: .bass).count) 个低音事件。点击选择，数字录入品位。")
+        .accessibilityIdentifier("score.measure.\(measureIndex + 1)")
+        .accessibilityValue(editor.hasEditingSelection && editor.measureIndex == measureIndex ? "已选择，\(editor.voice.title)，\(editor.string) 弦，\(editor.tick) ticks" : playingTick.map { "播放位置 \($0) ticks" } ?? "未选择")
+    }
+
+    private func selectNotation(at point: CGPoint, width: CGFloat) {
+        let capacity = score.timeSignature.ticks
+        let usable = max(1, width - 60)
+        let xFor: (Int) -> CGFloat = { 38 + CGFloat($0) / CGFloat(max(1, capacity)) * usable }
+        let measure = score.measures[measureIndex]
+        let voices = [editor.voice] + ScoreVoice.allCases.filter { $0 != editor.voice }
+
+        // Actual notes and rhythm glyphs keep their own voice. Checking their
+        // ink before the empty staff area also makes low/high voice picking direct.
+        for voice in voices {
+            for event in measure.events(for: voice) {
+                let x = xFor(event.startTick)
+                if let note = event.notes.first(where: {
+                    abs(point.x - x) <= 13 && abs(point.y - (top + CGFloat($0.string - 1) * spacing)) <= 10
+                }) {
+                    editor.voice = voice
+                    editor.select(measure: measureIndex, string: note.string, tick: event.startTick)
+                    return
+                }
+                let rhythmY: CGFloat = voice == .melody ? 27 : 199
+                if point.x >= x - 12 && point.x <= x + 23 && abs(point.y - rhythmY) <= 16 {
+                    editor.voice = voice
+                    editor.select(measure: measureIndex, string: event.notes.first?.string ?? editor.string, tick: event.startTick)
+                    return
+                }
+            }
+            let restY: CGFloat = voice == .melody ? 27 : 199
+            if abs(point.y - restY) <= 14 {
+                for gap in ScoreScheduler.restGaps(in: measure, voice: voice, capacity: capacity) {
+                    for rest in ScoreNotationSpacing.restFragments(gap) where abs(point.x - xFor(rest.startTick)) <= 12 {
+                        editor.voice = voice
+                        editor.selectTime(measure: measureIndex, string: editor.string, approximateTick: rest.startTick, tolerance: 0)
+                        return
+                    }
+                }
+            }
+        }
+
+        // Only the six-string band is an empty recording position. The beat
+        // numbers, canvas margins and space around rhythm marks cancel editing.
+        guard point.x >= 25, point.x <= width - 12,
+              point.y >= top - spacing / 2, point.y <= top + 5 * spacing + spacing / 2 else {
+            editor.clearSelection()
+            return
+        }
+        let relative = (point.x - 38) / usable
+        let rawTick = min(capacity - 1, max(0, Int(relative * Double(capacity))))
+        let tolerance = max(50, Int(Double(capacity) * 13 / Double(usable)))
+        let string = min(6, max(1, Int(((point.y - top) / spacing).rounded()) + 1))
+        editor.selectTime(measure: measureIndex, string: string, approximateTick: rawTick, tolerance: tolerance)
     }
 
     private func drawRest(context: inout GraphicsContext, at point: CGPoint, ticks: Int, color: Color) {
@@ -378,7 +432,7 @@ final class ScoreKeyView: NSView, NSMenuItemValidation {
             menuItem.title = name.isEmpty ? "重做" : "重做\(name)"
             return editor?.undoManager?.canRedo == true
         case #selector(copy(_:)), #selector(cut(_:)): return editor?.selectedEvent != nil
-        case #selector(paste(_:)): return true
+        case #selector(paste(_:)): return editor?.hasEditingSelection == true
         default: return true
         }
     }

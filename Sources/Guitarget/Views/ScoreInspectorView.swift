@@ -70,42 +70,48 @@ struct ScoreInspectorView: View {
     private var noteProperties: some View {
         VStack(alignment: .leading, spacing: 11) {
             Text("当前音符").font(.headline)
-            HStack {
-                Text(editor.voice.title).foregroundStyle(editor.voice == .melody ? .blue : .orange)
-                Spacer()
-                Text("\(editor.string) 弦 · \(editor.tick) ticks").foregroundStyle(.secondary)
-            }.font(.caption)
-            if let note = editor.selectedNote {
-                HStack {
-                    Text(midiName(score.midi(for: note))).font(.title2.bold())
-                    Spacer()
-                    Stepper("\(note.fret) 品", value: Binding(get: { editor.selectedNote?.fret ?? 0 }, set: { value in editor.updateSelectedNote({ $0.fret = value }, name: "更改品位") }), in: 0...24)
-                }
-                Toggle("延音至下一事件", isOn: Binding(get: { editor.selectedNote?.tieToNext ?? false }, set: { value in editor.updateSelectedNote({ $0.tieToNext = value }, name: "更改延音") }))
-                    .font(.callout)
-                HStack {
-                    Text("力度").font(.caption)
-                    Slider(value: Binding(get: { editor.selectedNote?.velocity ?? 0.75 }, set: { value in editor.updateSelectedNote({ $0.velocity = value }, name: "更改力度") }), in: 0.05...1)
-                }
-            } else {
-                Text(editor.selectedEvent?.notes.isEmpty == true ? "休止符" : "空位置：数字键输入 0–24 品")
+            if !editor.hasEditingSelection {
+                Text("未选中编辑位置。点击谱面音符或弦线空位置开始编辑。")
                     .font(.callout).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("score.inspector.noSelection")
+            } else {
+                HStack {
+                    Text(editor.voice.title).foregroundStyle(editor.voice == .melody ? .blue : .orange)
+                    Spacer()
+                    Text("\(editor.string) 弦 · \(editor.tick) ticks").foregroundStyle(.secondary)
+                }.font(.caption)
+                if let note = editor.selectedNote {
+                    HStack {
+                        Text(midiName(score.midi(for: note))).font(.title2.bold())
+                        Spacer()
+                        Stepper("\(note.fret) 品", value: Binding(get: { editor.selectedNote?.fret ?? 0 }, set: { value in editor.updateSelectedNote({ $0.fret = value }, name: "更改品位") }), in: 0...24)
+                    }
+                    Toggle("延音至下一事件", isOn: Binding(get: { editor.selectedNote?.tieToNext ?? false }, set: { value in editor.updateSelectedNote({ $0.tieToNext = value }, name: "更改延音") }))
+                        .font(.callout)
+                    HStack {
+                        Text("力度").font(.caption)
+                        Slider(value: Binding(get: { editor.selectedNote?.velocity ?? 0.75 }, set: { value in editor.updateSelectedNote({ $0.velocity = value }, name: "更改力度") }), in: 0.05...1)
+                    }
+                } else {
+                    Text(editor.selectedEvent?.notes.isEmpty == true ? "休止符" : "空位置：数字键输入 0–24 品")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                Picker("技巧", selection: Binding(get: { editor.technique }, set: editor.applyTechnique)) {
+                    ForEach(GuitarTechnique.allCases) { technique in Text(technique.title).tag(technique) }
+                }
+                if [.hammerOn, .pullOff, .slide].contains(editor.technique) {
+                    Stepper("目标品位 \(editor.targetFret)", value: Binding(get: { editor.targetFret }, set: { value in
+                        editor.targetFret = value
+                        editor.updateSelectedNote({ $0.targetFret = value }, name: "更改技巧目标")
+                    }), in: 0...24)
+                    Text("技巧从当前品位连续变化至目标品位。延音线连接相邻的同弦同品位音符。")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button("复制事件") { editor.copy() }.disabled(editor.selectedEvent == nil)
+                    Button("粘贴事件") { editor.paste() }
+                }.controlSize(.small)
             }
-            Picker("技巧", selection: Binding(get: { editor.technique }, set: editor.applyTechnique)) {
-                ForEach(GuitarTechnique.allCases) { technique in Text(technique.title).tag(technique) }
-            }
-            if [.hammerOn, .pullOff, .slide].contains(editor.technique) {
-                Stepper("目标品位 \(editor.targetFret)", value: Binding(get: { editor.targetFret }, set: { value in
-                    editor.targetFret = value
-                    editor.updateSelectedNote({ $0.targetFret = value }, name: "更改技巧目标")
-                }), in: 0...24)
-                Text("技巧从当前品位连续变化至目标品位。延音线连接相邻的同弦同品位音符。")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
-            HStack {
-                Button("复制事件") { editor.copy() }
-                Button("粘贴事件") { editor.paste() }
-            }.controlSize(.small)
         }
     }
 
@@ -119,6 +125,8 @@ struct ScoreInspectorView: View {
                 .disabled(editor.selectedEvent == nil)
                 .accessibilityLabel("当前事件歌词")
             Text(editor.selectedEvent == nil ? "先在谱面选中音符或休止符，再输入歌词。" : "歌词跟随当前声部的这一音，显示在谱面下方。可逐音输入，留空即可移除。")
+                .font(.caption2).foregroundStyle(.secondary)
+            Text("后续段落请继续添加小节；歌词换行本身不会增加播放时间。")
                 .font(.caption2).foregroundStyle(.secondary)
         }
     }
@@ -148,24 +156,27 @@ struct ScoreInspectorView: View {
 
     private var measureProperties: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("第 \(editor.measureIndex + 1) 小节").font(.headline)
-            ForEach(ScoreVoice.allCases) { voice in
-                let events = score.measures[editor.measureIndex].events(for: voice)
-                let end = events.map(\.endTick).max() ?? 0
-                HStack {
-                    Text(voice.title)
-                    Spacer()
-                    Text("\(end) / \(score.timeSignature.ticks)").font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
-                }.font(.caption)
+            if editor.hasEditingSelection {
+                Text("第 \(editor.measureIndex + 1) 小节").font(.headline)
+                ForEach(ScoreVoice.allCases) { voice in
+                    let events = score.measures[editor.measureIndex].events(for: voice)
+                    let end = events.map(\.endTick).max() ?? 0
+                    HStack {
+                        Text(voice.title)
+                        Spacer()
+                        Text("\(end) / \(score.timeSignature.ticks)").font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
+                    }.font(.caption)
+                }
+            } else {
+                Text("小节").font(.headline)
+                Text("选中谱面位置后可查看和编辑所在小节。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
                 Button("添加小节") { editor.addMeasure() }
                 Button("删除小节", role: .destructive) { editor.deleteMeasure() }
+                    .disabled(!editor.hasEditingSelection)
             }.controlSize(.small)
-            HStack {
-                Text("谱面缩放").font(.caption)
-                Slider(value: $editor.zoom, in: 1...1.8)
-            }
             Text("蓝色符干向上为旋律，橙色符干向下为低音。浅色休止符表示未录入的空余时值；同弦持续音冲突会阻止编辑并说明原因。")
                 .font(.caption2).foregroundStyle(.secondary)
         }
