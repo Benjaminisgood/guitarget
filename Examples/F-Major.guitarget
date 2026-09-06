@@ -1,0 +1,390 @@
+{
+  "bpm" : 80,
+  "measures" : [
+    {
+      "id" : "EF34DECB-D9FB-4F97-9FA1-E86C563556C1",
+      "voices" : [
+        {
+          "events" : [
+            {
+              "id" : "AD18BB21-5243-4BD8-91EE-E766AD2315A2",
+              "notes" : [
+                {
+                  "fret" : 5,
+                  "id" : "8852E339-C3C0-423F-B26C-CFE2F0A187F2",
+                  "string" : 6,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 0
+            },
+            {
+              "id" : "607A6766-379C-4F60-9C78-383E7EAB7B85",
+              "notes" : [
+                {
+                  "fret" : 6,
+                  "id" : "8272500D-3822-4521-B930-B73B2ACFD728",
+                  "string" : 6,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 480
+            },
+            {
+              "id" : "CFCD931C-C3CB-4024-B32B-35741B1C51B2",
+              "notes" : [
+                {
+                  "fret" : 8,
+                  "id" : "7C66D9B3-03D4-4A12-AAD6-6CF7D16B9655",
+                  "string" : 6,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 960
+            },
+            {
+              "id" : "47DC5DF5-4527-460F-808D-92DD8CE77D66",
+              "notes" : [
+                {
+                  "fret" : 5,
+                  "id" : "5DFA8900-1BCE-4D21-852E-DB10C0ECA8F6",
+                  "string" : 5,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 1440
+            },
+            {
+              "id" : "5CB9512A-9C1E-4987-A749-84AFF6703288",
+              "notes" : [
+                {
+                  "fret" : 7,
+                  "id" : "D5E6A685-860E-4032-B996-FE9788197F21",
+                  "string" : 5,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 1920
+            },
+            {
+              "id" : "7695C8B2-FC2E-40ED-983D-79E9160A1CB9",
+              "notes" : [
+                {
+                  "fret" : 8,
+                  "id" : "E531DD2F-091B-47DF-A24E-4781301EDBF2",
+                  "string" : 5,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 2400
+            },
+            {
+              "id" : "685D8543-A8CB-446E-8753-5F44D7757E26",
+              "notes" : [
+                {
+                  "fret" : 5,
+                  "id" : "A341CACD-4BDE-4F9D-8CBA-3B231BD7BE9A",
+                  "string" : 4,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 2880
+            },
+            {
+              "id" : "CB980D48-FF1F-4DB0-AA51-3A714C0169CF",
+              "notes" : [
+                {
+                  "fret" : 7,
+                  "id" : "45D66E72-2315-4DEB-ABD1-48CA394420A8",
+                  "string" : 4,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 3360
+            }
+          ],
+          "voice" : "melody"
+        },
+        {
+          "events" : [
+
+          ],
+          "voice" : "bass"
+        }
+      ]
+    },
+    {
+      "id" : "55150891-98FA-4F43-9CDB-A21B7A81CDC8",
+      "voices" : [
+        {
+          "events" : [
+            {
+              "id" : "EF64011A-6FC6-42CF-94D8-45688757A5C2",
+              "notes" : [
+                {
+                  "fret" : 8,
+                  "id" : "A658639B-9AD6-4D31-9FFA-1AC3CBDFBCCD",
+                  "string" : 4,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 0
+            },
+            {
+              "id" : "1EF3C1C1-765E-4E87-AFA7-1F450172061D",
+              "notes" : [
+                {
+                  "fret" : 5,
+                  "id" : "36C95C45-FD0E-4B34-96D9-2A4A3B590CD5",
+                  "string" : 3,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 480
+            },
+            {
+              "id" : "9BB5C581-765E-4A2E-B275-DF4B9BCB48BA",
+              "notes" : [
+                {
+                  "fret" : 7,
+                  "id" : "9ED321DB-4E50-4879-8B84-9A9CC166AD1F",
+                  "string" : 3,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 960
+            },
+            {
+              "id" : "7A804B70-06B8-4FD9-A821-B5E37A0A08F3",
+              "notes" : [
+                {
+                  "fret" : 5,
+                  "id" : "5FA0F4BD-2DA0-481E-961E-06DB4B4CB88C",
+                  "string" : 2,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 1440
+            },
+            {
+              "id" : "FB9E75FF-722C-499B-A87D-0E6E5E9EA2B8",
+              "notes" : [
+                {
+                  "fret" : 6,
+                  "id" : "6488EFC8-AB2E-4BBE-98F2-5E3FB18B711D",
+                  "string" : 2,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 1920
+            },
+            {
+              "id" : "0A86BCF3-0DFD-4F77-A0A5-B44C79E7861E",
+              "notes" : [
+                {
+                  "fret" : 8,
+                  "id" : "B2C4758B-6CF3-4EC7-870E-699DC534D73F",
+                  "string" : 2,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 2400
+            },
+            {
+              "id" : "96E2E5E6-937C-4DAE-BDEC-DE8924C6896A",
+              "notes" : [
+                {
+                  "fret" : 5,
+                  "id" : "C17D6572-171C-49A7-81F1-AFBC39F8C16D",
+                  "string" : 1,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 2880
+            },
+            {
+              "id" : "0E1FAB7E-FD89-4449-9392-E7A407ED5E98",
+              "notes" : [
+                {
+                  "fret" : 6,
+                  "id" : "397CF795-7D0C-4457-9C99-8ED04C19E559",
+                  "string" : 1,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 3360
+            }
+          ],
+          "voice" : "melody"
+        },
+        {
+          "events" : [
+
+          ],
+          "voice" : "bass"
+        }
+      ]
+    },
+    {
+      "id" : "3BEB9711-B4CF-4CD9-9679-E2D93183E892",
+      "voices" : [
+        {
+          "events" : [
+            {
+              "id" : "39B345F5-19E4-40B7-99C4-18D83584B423",
+              "notes" : [
+                {
+                  "fret" : 8,
+                  "id" : "057B60A6-DD6B-414B-A924-BF17DC0FBDF1",
+                  "string" : 1,
+                  "technique" : "none",
+                  "tieToNext" : false,
+                  "velocity" : 0.75
+                }
+              ],
+              "rhythm" : {
+                "dotted" : false,
+                "triplet" : false,
+                "value" : 8
+              },
+              "startTick" : 0
+            }
+          ],
+          "voice" : "melody"
+        },
+        {
+          "events" : [
+
+          ],
+          "voice" : "bass"
+        }
+      ]
+    }
+  ],
+  "timeSignature" : {
+    "denominator" : 4,
+    "numerator" : 4
+  },
+  "title" : "F 大调 · C 形",
+  "tuning" : [
+    64,
+    59,
+    55,
+    50,
+    45,
+    40
+  ],
+  "version" : 1
+}

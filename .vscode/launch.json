@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:guitarget}",
+            "name": "Debug Guitarget",
+            "target": "Guitarget",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Guitarget"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:guitarget}",
+            "name": "Release Guitarget",
+            "target": "Guitarget",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Guitarget"
+        }
+    ]
+}

@@ -1,0 +1,48 @@
+# SwiftPM 编译缓存（包括 .build-core 等隔离构建目录）
+/.build*/
+# 保留 .swiftpm/configuration 与共享 scheme，只忽略生成的 Xcode 工作区。
+/.swiftpm/xcode/*
+!/.swiftpm/xcode/xcshareddata/
+
+# 本地应用包、验收输出、录音、诊断日志
+/dist/
+/artifacts/
+/build/
+/DerivedData/
+/*.log
+
+# Xcode 个人工作区状态、测试结果与覆盖率
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+*.xcresult/
+*.profraw
+*.profdata
+*.dSYM/
+
+# make_icon.swift 生成的中间 PNG；保留打包所需的 script/Guitarget.icns
+/Guitarget.iconset/
+/script/Guitarget.iconset/
+
+# macOS 元数据
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# 编辑器临时文件
+*.swp
+*.swo
+*~
+
+# 本机环境变量；配置示例可以提交
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# 有意保留：Package.resolved、.codex/environments/environment.toml、
+# .vscode/launch.json、Sources/、Tests/、docs/、Examples/ 与构建脚本。
+# 不全局忽略 .guitarget、JSON、音频或图片，避免隐藏示例与测试资源。
