@@ -120,6 +120,8 @@ private final class CaptureAnalyzer: @unchecked Sendable {
         return node.presentationLatency
     }
     private let outputEngine = AVAudioEngine()
+    private let playbackToken = UUID()
+    private let playbackCoordinator: PlaybackCoordinator
     private var inputEngine: AVAudioEngine?
     private var inputConfigurationObserver: NSObjectProtocol?
     private var inputStartTimeout: Timer?
@@ -155,8 +157,10 @@ private final class CaptureAnalyzer: @unchecked Sendable {
     init(startRuntime: Bool, hardwareQueue: DispatchQueue = AudioHardwareWork.queue,
          snapshotProvider: @escaping () -> AudioHardwareSnapshot = AudioHardwareSnapshot.read,
          systemTapFactory: @escaping SystemTapSession.Factory = { ProcessTapCapture(ring: $0, cancellation: $1) },
-         systemStartTimeoutSeconds: TimeInterval = 10) {
+         systemStartTimeoutSeconds: TimeInterval = 10,
+         playbackCoordinator: PlaybackCoordinator? = nil) {
         self.hardwareQueue = hardwareQueue; self.snapshotProvider = snapshotProvider; self.systemTapFactory = systemTapFactory
+        self.playbackCoordinator = playbackCoordinator ?? .shared
         self.systemStartTimeoutSeconds = systemStartTimeoutSeconds.isFinite ? max(0.001, min(30, systemStartTimeoutSeconds)) : 10
         configureAnalyzerDelivery()
         guard startRuntime else { return }
@@ -243,11 +247,20 @@ private final class CaptureAnalyzer: @unchecked Sendable {
         for waiter in waiters { waiter.1.cancel(); waiter.0.resume(returning: true) }
     }
     private func ensureOutput() throws {
-        if !outputEngine.isRunning { outputEngine.prepare(); try outputEngine.start() }
+        guard playbackCoordinator.acquire(token: playbackToken, interrupt: { [weak self] in self?.pause() }) else {
+            throw NSError(domain: "Guitarget.Playback", code: 1, userInfo: [NSLocalizedDescriptionKey: "播放已由其他音频接管。"])
+        }
+        do {
+            if !outputEngine.isRunning { outputEngine.prepare(); try outputEngine.start() }
+        } catch {
+            playbackCoordinator.release(token: playbackToken)
+            throw error
+        }
     }
     public func setOutputDevice(_ id: UInt32) {
         let wasPlaying = isPlaying, wasPaused = isPaused
         outputEngine.stop()
+        playbackCoordinator.release(token: playbackToken)
         currentTick = playback.renderer?.currentTick ?? currentTick
         isPlaying = false
         isPaused = (wasPlaying || wasPaused) && playback.renderer != nil
@@ -329,6 +342,7 @@ private final class CaptureAnalyzer: @unchecked Sendable {
         guard isPlaying else { return }
         outputEngine.pause(); currentTick = playback.renderer?.currentTick ?? currentTick
         isPaused = true; isPlaying = false; status = "已暂停"
+        playbackCoordinator.release(token: playbackToken)
     }
     public func resume() {
         guard isPaused else { return }
@@ -340,6 +354,7 @@ private final class CaptureAnalyzer: @unchecked Sendable {
     public func stop() {
         accompanimentOptions = nil
         outputEngine.stop(); playback.renderer = nil; playingScore = nil
+        playbackCoordinator.release(token: playbackToken)
         isPlaying = false; isPaused = false; isCountingIn = false; currentTick = 0; ownerID = nil; transportStartHostTime = nil
         status = isCapturing ? "正在采集 · 等待单音" : "已停止 · 采集已关闭"
     }
@@ -538,6 +553,7 @@ private final class CaptureAnalyzer: @unchecked Sendable {
             currentTick = min(renderer.score.totalTicks, renderer.currentTick)
             if renderer.finished.load(ordering: .acquiring) {
                 outputEngine.stop(); isPlaying = false; isPaused = false; isCountingIn = false; status = "演奏结束"
+                playbackCoordinator.release(token: playbackToken)
             }
         }
         monitorCounter += 1

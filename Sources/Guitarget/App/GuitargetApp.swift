@@ -67,6 +67,7 @@ final class GuitargetAppDelegate: NSObject, NSApplicationDelegate {
                 var result: [String: Any] = ["application": "Guitarget", "kind": "native-editor-self-check"]
                 do {
                     var checks = try runScoreEditorChecks()
+                    checks.append(contentsOf: try runScorePerformanceChecks())
                     checks.append(try runScoreLibraryChecks())
                     checks.append(try await runScoreEditorDelayedUndoCheck())
                     checks.append(contentsOf: try await runScoreTransportChecks())

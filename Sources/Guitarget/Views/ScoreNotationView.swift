@@ -99,9 +99,10 @@ struct ScoreNotationView: View {
                 if !events.isEmpty {
                     ScoreLyricLayout(startTicks: events.map(\.startTick), capacity: score.timeSignature.ticks) {
                         ForEach(events) { event in
-                            let selected = editor.hasEditingSelection && editor.measureIndex == measureIndex && editor.tick == event.startTick && editor.voice == voice
+                            let selected = editor.canEdit && editor.hasEditingSelection && editor.measureIndex == measureIndex && editor.tick == event.startTick && editor.voice == voice
                             let active = !mutedVoices.contains(voice) && (playingTick.map { $0 >= event.startTick && $0 < event.endTick } ?? false)
                             Button {
+                                guard editor.canEdit else { return }
                                 editor.voice = voice
                                 editor.select(measure: measureIndex, string: event.notes.first?.string ?? editor.string, tick: event.startTick)
                             } label: {
@@ -113,7 +114,8 @@ struct ScoreNotationView: View {
                                     .background(active ? Color.green.opacity(0.15) : selected ? Color.accentColor.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 3))
                             }
                             .buttonStyle(.plain)
-                            .help("\(voice.title)歌词：\(event.lyric ?? "") · 点击选择对应音符")
+                            .disabled(!editor.canEdit)
+                            .help("\(voice.title)歌词：\(event.lyric ?? "")" + (editor.canEdit ? " · 点击选择对应音符" : ""))
                             .accessibilityLabel("第 \(measureIndex + 1) 小节，\(voice.title)，\(event.startTick) ticks，歌词：\(event.lyric ?? "")")
                         }
                     }
@@ -123,7 +125,7 @@ struct ScoreNotationView: View {
         }
         .background {
             Color(nsColor: .textBackgroundColor).contentShape(Rectangle())
-                .onTapGesture { editor.clearSelection() }
+                .onTapGesture { if editor.canEdit { editor.clearSelection() } }
         }
     }
 
@@ -170,7 +172,7 @@ struct ScoreNotationView: View {
                 }
                 for event in events {
                     let x = xFor(event.startTick)
-                    let selected = editor.hasEditingSelection && editor.measureIndex == measureIndex && editor.tick == event.startTick && editor.voice == voice
+                    let selected = editor.canEdit && editor.hasEditingSelection && editor.measureIndex == measureIndex && editor.tick == event.startTick && editor.voice == voice
                     let active = !mutedVoices.contains(voice) && (playingTick.map { $0 >= event.startTick && $0 < event.endTick } ?? false)
                     if event.notes.isEmpty {
                         // The glyph encodes the base note value. Dots and triplet
@@ -230,7 +232,7 @@ struct ScoreNotationView: View {
                     }
                 }
             }
-            if editor.hasEditingSelection && editor.measureIndex == measureIndex {
+            if editor.canEdit && editor.hasEditingSelection && editor.measureIndex == measureIndex {
                 let x = xFor(editor.tick), y = top + CGFloat(editor.string - 1) * spacing
                 context.stroke(Path(roundedRect: CGRect(x: x - 12, y: y - 11, width: 26, height: 22), cornerRadius: 5), with: .color(.accentColor.opacity(0.9)), lineWidth: 1.8)
             }
@@ -244,19 +246,22 @@ struct ScoreNotationView: View {
         .background(Color(nsColor: .textBackgroundColor))
         .contentShape(Rectangle())
         .overlay {
-            GeometryReader { proxy in
-                Color.clear.contentShape(Rectangle()).onTapGesture { point in
-                    selectNotation(at: point, width: proxy.size.width)
+            if editor.canEdit {
+                GeometryReader { proxy in
+                    Color.clear.contentShape(Rectangle()).onTapGesture { point in
+                        selectNotation(at: point, width: proxy.size.width)
+                    }
                 }
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("第 \(measureIndex + 1) 小节，\(score.measures[measureIndex].events(for: .melody).count) 个旋律事件，\(score.measures[measureIndex].events(for: .bass).count) 个低音事件。点击选择，数字录入品位。")
+        .accessibilityLabel("第 \(measureIndex + 1) 小节，\(score.measures[measureIndex].events(for: .melody).count) 个旋律事件，\(score.measures[measureIndex].events(for: .bass).count) 个低音事件。" + (editor.canEdit ? "点击选择，数字录入品位。" : "演奏模式，谱面跟随弹奏。"))
         .accessibilityIdentifier("score.measure.\(measureIndex + 1)")
-        .accessibilityValue(editor.hasEditingSelection && editor.measureIndex == measureIndex ? "已选择，\(editor.voice.title)，\(editor.string) 弦，\(editor.tick) ticks" : playingTick.map { "播放位置 \($0) ticks" } ?? "未选择")
+        .accessibilityValue(editor.canEdit && editor.hasEditingSelection && editor.measureIndex == measureIndex ? "已选择，\(editor.voice.title)，\(editor.string) 弦，\(editor.tick) ticks" : playingTick.map { "\(editor.isPerformanceMode ? "跟随位置" : "播放位置") \($0) ticks" } ?? (editor.isPerformanceMode ? "等待演奏" : "未选择"))
     }
 
     private func selectNotation(at point: CGPoint, width: CGFloat) {
+        guard editor.canEdit else { return }
         let capacity = score.timeSignature.ticks
         let usable = max(1, width - 60)
         let xFor: (Int) -> CGFloat = { 38 + CGFloat($0) / CGFloat(max(1, capacity)) * usable }
@@ -416,23 +421,24 @@ final class ScoreKeyView: NSView, NSMenuItemValidation {
         guard window?.firstResponder === self else { return super.performKeyEquivalent(with: event) }
         return editor?.handleKey(event) ?? false
     }
-    @objc func undo(_ sender: Any?) { editor?.performUndo() }
-    @objc func redo(_ sender: Any?) { editor?.performRedo() }
+    @objc func undo(_ sender: Any?) { if editor?.canEdit == true { editor?.performUndo() } }
+    @objc func redo(_ sender: Any?) { if editor?.canEdit == true { editor?.performRedo() } }
     @objc func copy(_ sender: Any?) { editor?.copy() }
-    @objc func cut(_ sender: Any?) { editor?.cut() }
-    @objc func paste(_ sender: Any?) { editor?.paste() }
+    @objc func cut(_ sender: Any?) { if editor?.canEdit == true { editor?.cut() } }
+    @objc func paste(_ sender: Any?) { if editor?.canEdit == true { editor?.paste() } }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(undo(_:)):
             let name = editor?.undoManager?.undoActionName ?? ""
             menuItem.title = name.isEmpty ? "撤销" : "撤销\(name)"
-            return editor?.undoManager?.canUndo == true
+            return editor?.canEdit == true && editor?.undoManager?.canUndo == true
         case #selector(redo(_:)):
             let name = editor?.undoManager?.redoActionName ?? ""
             menuItem.title = name.isEmpty ? "重做" : "重做\(name)"
-            return editor?.undoManager?.canRedo == true
-        case #selector(copy(_:)), #selector(cut(_:)): return editor?.selectedEvent != nil
-        case #selector(paste(_:)): return editor?.hasEditingSelection == true
+            return editor?.canEdit == true && editor?.undoManager?.canRedo == true
+        case #selector(copy(_:)): return editor?.selectedEvent != nil
+        case #selector(cut(_:)): return editor?.canEdit == true && editor?.selectedEvent != nil
+        case #selector(paste(_:)): return editor?.canEdit == true && editor?.hasEditingSelection == true
         default: return true
         }
     }

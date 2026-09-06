@@ -11,15 +11,19 @@ struct ScoreInspectorView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                scoreProperties
-                Divider()
-                noteProperties
-                Divider()
-                lyricProperties
-                Divider()
-                playbackProperties
-                Divider()
-                measureProperties
+                if editor.isPerformanceMode {
+                    performanceProperties
+                } else {
+                    scoreProperties
+                    Divider()
+                    noteProperties
+                    Divider()
+                    lyricProperties
+                    Divider()
+                    playbackProperties
+                    Divider()
+                    measureProperties
+                }
                 if !editor.issues.isEmpty {
                     Divider()
                     VStack(alignment: .leading, spacing: 8) {
@@ -33,6 +37,36 @@ struct ScoreInspectorView: View {
             }.padding(16)
         }
         .background(.quaternary.opacity(0.25))
+    }
+
+    private var performanceProperties: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("演奏模式", systemImage: "music.mic")
+                .font(.headline)
+            Text(score.title).font(.title3.weight(.semibold))
+            Text("\(score.timeSignature.title) · ♩ = \(ScoreEditorState.bpmText(for: score.bpm)) · \(score.measures.count) 小节")
+                .font(.caption).foregroundStyle(.secondary)
+            Divider()
+            Text("智能跟随").font(.headline)
+            Text(editor.performanceStatus)
+                .font(.callout)
+                .accessibilityIdentifier("score.performance.status")
+            LabeledContent("跟随声部", value: editor.voice.title)
+                .font(.callout)
+            if let note = editor.performanceExpectedNote {
+                LabeledContent("等待音符", value: note)
+                    .font(.callout)
+                    .accessibilityIdentifier("score.performance.expectedNote")
+            }
+            Text("谱面根据你弹奏的音符前进，与附加音频的播放时间独立。选择上方的旋律或低音声部，按谱逐音弹奏。和弦与连续变音技巧等待后续单音定位；麦克风输入建议戴耳机。")
+                .font(.caption).foregroundStyle(.secondary)
+            Divider()
+            Label("曲谱已锁定", systemImage: "lock")
+                .font(.callout.weight(.medium))
+            Text("演奏时点击谱面不会改变位置。需要改谱时，在第一行切换回曲谱合成。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .accessibilityIdentifier("score.inspector.performance")
     }
 
     private var scoreProperties: some View {

@@ -3,11 +3,23 @@ import AppKit
 import GuitarCore
 import GuitarAudio
 import OSLog
+import Combine
 
 private let editorUndoLogger = Logger(subsystem: "com.guitarget.mac", category: "EditorUndo")
 
 @MainActor
 final class ScoreEditorState: ObservableObject {
+    static weak var activePerformer: ScoreEditorState?
+    @Published var audioSource: ScoreAudioSource = .score
+    @Published var follower = ScoreFollower()
+    var referencePlayer: ReferenceAudioPlayer?
+    var referenceEntryID: UUID?
+    var referenceURL: URL?
+    var referenceSubscription: AnyCancellable?
+    var captureWasStarted = false
+    var previousCaptureSource: CaptureSource?
+    var canEdit: Bool { audioSource == .score }
+    var isPerformanceMode: Bool { !canEdit }
     @Published var measureIndex = 0
     @Published var voice: ScoreVoice = .melody {
         didSet {
@@ -15,6 +27,7 @@ final class ScoreEditorState: ObservableObject {
                 pendingDigit = nil
                 synchronizeSelectionProperties()
                 keyboardFocusToken = UUID()
+                if isPerformanceMode { resetFollowing() }
             }
         }
     }
@@ -57,6 +70,7 @@ final class ScoreEditorState: ObservableObject {
     /// The audio clock belongs to this window only during its score transport.
     /// Preview notes and another document never replace its stored start point.
     var displayTick: Int {
+        if isPerformanceMode { return boundedPlaybackTick(follower.currentTick) }
         if let audio, audio.ownerID == owner, audio.isPlaying || audio.isPaused {
             return boundedPlaybackTick(audio.currentTick)
         }
@@ -74,6 +88,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func audition(string: Int, fret: Int) {
+        guard canEdit else { return }
         guard let audio else { return }
         if audio.ownerID == owner {
             if audio.isPlaying { audio.pause() }
@@ -98,18 +113,22 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func performUndo() {
+        guard canEdit else { return }
         logUndo("undo requested")
         undoManager?.undo()
         objectWillChange.send()
     }
 
     func performRedo() {
+        guard canEdit else { return }
         logUndo("redo requested")
         undoManager?.redo()
         objectWillChange.send()
     }
 
     func stopOwnedPlayback() {
+        pauseFollowing()
+        if referencePlayer?.ownerID == owner { referencePlayer?.pause() }
         if audio?.ownerID == owner || audio?.ownerID == auditionOwner { audio?.stop() }
     }
 
@@ -137,6 +156,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func commit(_ candidate: GuitarScore, name: String, validate: Bool = true) {
+        guard canEdit else { return }
         guard candidate != score else { return }
         if validate, let issue = ScoreValidator.validate(candidate).first(where: { $0.severity == .error }) {
             error = issue.message; return
@@ -145,6 +165,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     private func restore(_ updated: GuitarScore, name: String) {
+        guard canEdit else { return }
         let old = score
         let retainedPosition = displayTick
         logUndo("register " + name)
@@ -165,11 +186,12 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func editScore(name: String, _ edit: (inout GuitarScore) -> Void) {
+        guard canEdit else { return }
         var candidate = score; edit(&candidate); commit(candidate, name: name)
     }
 
     private func editEvents(name: String, _ edit: (inout [ScoreEvent]) -> Void) {
-        guard hasEditingSelection, score.measures.indices.contains(measureIndex) else { return }
+        guard canEdit, hasEditingSelection, score.measures.indices.contains(measureIndex) else { return }
         var candidate = score
         guard let track = candidate.measures[measureIndex].voices.firstIndex(where: { $0.voice == voice }) else { return }
         edit(&candidate.measures[measureIndex].voices[track].events)
@@ -178,6 +200,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func select(measure: Int, string: Int, tick: Int) {
+        guard canEdit else { return }
         guard !score.measures.isEmpty else { return }
         measureIndex = min(max(0, measure), score.measures.count - 1)
         self.string = min(max(1, string), 6)
@@ -200,6 +223,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func selectTime(measure: Int, string: Int, approximateTick: Int, tolerance: Int) {
+        guard canEdit else { return }
         guard !score.measures.isEmpty else { return }
         let index = min(max(0, measure), score.measures.count - 1)
         let position = editingTick(measure: index, approximateTick: approximateTick, tolerance: tolerance)
@@ -222,6 +246,7 @@ final class ScoreEditorState: ObservableObject {
     /// current rhythm grid and always leaves room for a complete event.
     @discardableResult
     func locatePlayback(at requestedTick: Int) -> Int {
+        guard canEdit else { return displayTick }
         let bounded = boundedPlaybackTick(requestedTick)
         playbackPositionTick = bounded
         // Keep a legal insertion grid ready without making it an active selection.
@@ -240,6 +265,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func insertDigit(_ digit: Int) {
+        guard canEdit else { return }
         guard hasEditingSelection else { return }
         let now = Date.timeIntervalSinceReferenceDate
         var fret = digit
@@ -255,6 +281,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func insertFret(_ fret: Int) {
+        guard canEdit else { return }
         let note = GuitarNote(string: string, fret: fret, technique: technique,
                               targetFret: [.hammerOn, .pullOff, .slide].contains(technique) ? targetFret : nil)
         editEvents(name: "输入品位") { events in
@@ -273,6 +300,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func insertRest() {
+        guard canEdit else { return }
         editEvents(name: "输入休止符") { events in
             if let index = events.firstIndex(where: { $0.startTick == tick }) {
                 events[index].notes = []
@@ -285,6 +313,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func delete() {
+        guard canEdit else { return }
         editEvents(name: "删除音符") { events in
             guard let index = events.firstIndex(where: { $0.startTick == tick }) else { return }
             if events[index].notes.isEmpty { events.remove(at: index) }
@@ -298,6 +327,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func updateRhythm(_ value: Rhythm) {
+        guard canEdit else { return }
         rhythm = value
         if selectedEvent != nil { editEvents(name: "更改时值") { events in
             if let index = events.firstIndex(where: { $0.startTick == tick }) { events[index].rhythm = value }
@@ -322,6 +352,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func applyTechnique(_ value: GuitarTechnique) {
+        guard canEdit else { return }
         technique = value
         if let note = selectedNote {
             if value == .hammerOn { targetFret = min(24, note.fret + 2) }
@@ -333,6 +364,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func move(horizontal: Int = 0, vertical: Int = 0) {
+        guard canEdit else { return }
         guard !score.measures.isEmpty else { return }
         let nextString = min(6, max(1, string + vertical))
         var position = absoluteTick
@@ -351,12 +383,14 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func addMeasure() {
+        guard canEdit else { return }
         editScore(name: "添加小节") { $0.measures.append(ScoreMeasure()) }
         select(measure: score.measures.count - 1, string: string, tick: 0)
         loopEnd = max(loopEnd, score.measures.count)
     }
 
     func deleteMeasure() {
+        guard canEdit else { return }
         guard hasEditingSelection else { return }
         guard score.measures.count > 1 else { error = "曲谱至少需要一个小节。"; return }
         editScore(name: "删除小节") { $0.measures.remove(at: measureIndex) }
@@ -372,11 +406,13 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func cut() {
+        guard canEdit else { return }
         copy()
         editEvents(name: "剪切事件") { $0.removeAll { $0.startTick == tick } }
     }
 
     func paste() {
+        guard canEdit else { return }
         guard hasEditingSelection else { return }
         let data = NSPasteboard.general.data(forType: .init("com.guitarget.event")) ?? NSPasteboard.general.string(forType: .string)?.data(using: .utf8)
         guard let data, var event = try? JSONDecoder().decode(ScoreEvent.self, from: data) else {
@@ -390,11 +426,13 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func applyTransportSettings() {
+        guard canEdit else { return }
         guard let audio, audio.ownerID == nil || audio.ownerID == owner else { return }
         audio.loopRange = loopEnabled ? (max(0, loopStart - 1) * score.timeSignature.ticks)..<(min(score.measures.count, max(loopStart, loopEnd)) * score.timeSignature.ticks) : nil
     }
 
     func playPause() {
+        if isPerformanceMode { togglePerformance(); return }
         guard let audio else { return }
         if audio.ownerID == owner, audio.isPlaying {
             audio.pause()
@@ -414,6 +452,7 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func playFrom(tick: Int) {
+        guard canEdit else { return }
         guard let audio, canStartPlayback else { return }
         let position = boundedPlaybackTick(tick)
         audio.stop()
@@ -434,6 +473,10 @@ final class ScoreEditorState: ObservableObject {
     }
 
     func handleKey(_ event: NSEvent) -> Bool {
+        if isPerformanceMode {
+            if event.keyCode == 49 && !event.modifierFlags.contains(.command) { playPause(); return true }
+            return false
+        }
         if event.modifierFlags.contains(.command) {
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "c": copy(); return true

@@ -21,34 +21,13 @@ struct ScoreEditorView: View {
     private var score: GuitarScore { document.score }
     private var ownsAudio: Bool { audio.ownerID == editor.owner }
     private var libraryEntry: LocalScoreLibraryEntry? { library.entry(for: fileURL) }
-    private var transportPositionTitle: String {
-        if ownsAudio && audio.isCountingIn { return "预备拍" }
-        let measure = editor.displayTick / max(1, score.timeSignature.ticks)
-        return "第 \(measure + 1) 小节"
-    }
 
     var body: some View {
         // Refresh the document accessor before child views read selection state.
         // This only updates the bridge; it does not publish changes while rendering.
         let _ = editor.connect($document, undoManager: undoManager, audio: audio, synchronizeSelection: false)
         return VStack(spacing: 0) {
-            transport
-            if let entry = libraryEntry, entry.localAudioFilename != nil || entry.appleMusicURL != nil {
-                Divider()
-                HStack(spacing: 16) {
-                    if entry.localAudioFilename != nil {
-                        ReferenceAudioControls(entry: entry, player: library.referenceAudio).frame(maxWidth: 580)
-                    }
-                    if entry.appleMusicURL != nil {
-                        Button("在“音乐”中打开") {
-                            library.openAppleMusic(entry)
-                            if let error = library.error { editor.error = error; library.error = nil }
-                        }
-                    }
-                    Spacer()
-                    Text("原声独立播放").font(.caption).foregroundStyle(.secondary)
-                }.padding(.horizontal, 16).padding(.vertical, 8)
-            }
+            ScoreTransportView(editor: editor, audio: audio, reference: library.referenceAudio, entry: libraryEntry)
             Divider()
             rhythmBar
             Divider()
@@ -73,11 +52,19 @@ struct ScoreEditorView: View {
         .onAppear {
             editor.connect($document, undoManager: undoManager, audio: audio)
             refreshPerformanceTimeline()
+            configureReference()
         }
         .onChange(of: document.score) { _, _ in
             editor.connect($document, undoManager: undoManager, audio: audio)
             editor.objectWillChange.send()
             refreshPerformanceTimeline()
+            if editor.isPerformanceMode { editor.resetFollowing() }
+        }
+        .onChange(of: fileURL) { _, _ in configureReference() }
+        .onChange(of: library.entries) { _, _ in configureReference() }
+        .onReceive(audio.pitchFrames) { editor.consumePerformance($0) }
+        .onChange(of: audio.isPlaying) { _, playing in
+            if playing && editor.isPerformanceMode { editor.pauseFollowing() }
         }
         .onChange(of: editor.voice) { _, _ in refreshPerformanceTimeline() }
         .onDisappear { editor.stopOwnedPlayback() }
@@ -121,43 +108,35 @@ struct ScoreEditorView: View {
         }
     }
 
-    private var transport: some View {
-        HStack(spacing: 13) {
-            HStack(spacing: 6) {
-                Button { editor.playPause() } label: {
-                    Image(systemName: ownsAudio && audio.isPlaying ? "pause.fill" : "play.fill").frame(width: 20)
-                }.buttonStyle(.borderedProminent).help("播放 / 暂停（空格）")
-                    .accessibilityLabel(ownsAudio && audio.isPlaying ? "暂停曲谱" : "播放曲谱")
-                    .accessibilityIdentifier("score.playPause")
-                Button { editor.stopOwnedPlayback() } label: { Image(systemName: "stop.fill") }.help("停止")
-                Button { editor.locatePlayback(at: 0) } label: { Image(systemName: "backward.end.fill") }.help("回到开头")
-            }
-            Text(transportPositionTitle)
-                .font(.system(.body, design: .monospaced)).frame(width: 90, alignment: .leading)
-            Slider(value: Binding(get: { Double(editor.displayTick) }, set: { value in
-                editor.locatePlayback(at: Int(value))
-            }), in: 0...Double(max(1, score.totalTicks - 1)))
-                .help("定位播放位置")
-                .accessibilityLabel("曲谱播放位置")
-                .accessibilityValue("\(editor.displayTick) ticks")
-                .accessibilityIdentifier("score.playbackPosition")
-            Text("\(ScoreTimeFormatter.text(tick: editor.displayTick, bpm: score.bpm)) / \(ScoreTimeFormatter.text(tick: score.totalTicks, bpm: score.bpm))")
-                .font(.system(.caption, design: .monospaced)).monospacedDigit()
-                .fixedSize()
-                .accessibilityLabel("曲谱时间")
-                .help("按曲谱 BPM 计算的位置与总时长；变速时仍显示相同谱面位置。原声音频有独立的时间轴。")
-            Picker("变速", selection: $audio.speed) {
-                ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { speed in Text(String(format: "%.2g×", speed)).tag(speed) }
-            }.frame(width: 105)
-            Toggle(isOn: $audio.metronomeEnabled) { Image(systemName: "metronome") }.toggleStyle(.button).help("节拍器")
-            Toggle(isOn: $audio.countInEnabled) { Text("预备拍") }.toggleStyle(.button)
-        }.padding(.horizontal, 16).padding(.vertical, 10)
+    private func configureReference() {
+        let entry = libraryEntry
+        let url = entry.flatMap { try? library.audioURL(for: $0.id) }
+        editor.configureReference(player: library.referenceAudio, entryID: entry?.id, url: url)
+    }
+
+    private var performanceControls: some View {
+        HStack(spacing: 14) {
+            Label("演奏模式", systemImage: "lock.fill").foregroundStyle(.green)
+            Picker("跟随声部", selection: $editor.voice) {
+                Text("↑ 旋律").tag(ScoreVoice.melody)
+                Text("↓ 低音").tag(ScoreVoice.bass)
+            }.pickerStyle(.segmented).frame(width: 160)
+            Text(editor.performanceStatus).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                .accessibilityIdentifier("score.followStatus")
+            Spacer(minLength: 0)
+            SettingsLink { Image(systemName: "mic.badge.plus") }.help("选择吉他麦克风或声卡输入")
+            notationLayoutControls(compact: true)
+        }
     }
 
     private var rhythmBar: some View {
         ViewThatFits(in: .horizontal) {
-            rhythmControls(compact: false)
-            rhythmControls(compact: true)
+            if editor.isPerformanceMode {
+                performanceControls
+            } else {
+                rhythmControls(compact: false)
+                rhythmControls(compact: true)
+            }
         }
         .controlSize(.small).padding(.horizontal, 16).padding(.vertical, 8)
     }
@@ -236,7 +215,7 @@ struct ScoreEditorView: View {
             HStack {
                 Text("\(index + 1)").font(.system(.caption, design: .monospaced).bold())
                 Spacer()
-                if editor.loopEnabled && (editor.loopStart...max(editor.loopStart, editor.loopEnd)).contains(index + 1) {
+                if editor.canEdit && editor.loopEnabled && (editor.loopStart...max(editor.loopStart, editor.loopEnd)).contains(index + 1) {
                     Image(systemName: "repeat").foregroundStyle(.green)
                 }
                 if editor.hasEditingSelection && editor.measureIndex == index {
@@ -244,7 +223,7 @@ struct ScoreEditorView: View {
                 }
             }.padding(.horizontal, 12).padding(.vertical, 6)
             ScoreMeasureViewport(score: score, measureIndex: index, editor: editor,
-                                 playingTick: playingTick(in: index), mutedVoices: audio.mutedVoices)
+                                 playingTick: playingTick(in: index), mutedVoices: editor.isPerformanceMode ? [] : audio.mutedVoices)
         }
         .background {
             Color(nsColor: .textBackgroundColor).contentShape(Rectangle())
@@ -253,9 +232,11 @@ struct ScoreEditorView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(editor.hasEditingSelection && editor.measureIndex == index ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(0.2), lineWidth: 1).allowsHitTesting(false))
         .contextMenu {
+            if editor.canEdit {
             Button("从此小节播放") { editor.playFrom(tick: index * score.timeSignature.ticks) }
             Button("设为循环开始") { editor.loopStart = index + 1; editor.loopEnd = max(editor.loopEnd, editor.loopStart); editor.loopEnabled = true; editor.applyTransportSettings() }
             Button("设为循环结束") { editor.loopEnd = index + 1; editor.loopStart = min(editor.loopStart, editor.loopEnd); editor.loopEnabled = true; editor.applyTransportSettings() }
+            }
         }
     }
 
@@ -320,7 +301,7 @@ struct ScoreEditorView: View {
     private var soundingNotes: [GuitarNote] {
         if ownsAudio && audio.isCountingIn { return [] }
         if !editor.hasEditingSelection {
-            return editor.playbackNotes(at: editor.displayTick, mutedVoices: audio.mutedVoices)
+            return editor.playbackNotes(at: editor.displayTick, mutedVoices: editor.isPerformanceMode ? [] : audio.mutedVoices)
         }
         return editor.selectedEvent?.notes ?? []
     }
@@ -341,7 +322,7 @@ struct ScoreEditorView: View {
                 .accessibilityIdentifier("score.fretboard.toggle")
                 .help(linkedFretboardVisible ? "向下收起联动指板" : "展开联动指板")
                 if linkedFretboardVisible {
-                    Text("点击试听 · 蓝色为选中或正在发声的位置").font(.caption2).foregroundStyle(.secondary)
+                    Text(editor.isPerformanceMode ? "跟随弹奏 · 指板显示当前谱位" : "点击试听 · 蓝色为选中或正在发声的位置").font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
             }
@@ -352,6 +333,7 @@ struct ScoreEditorView: View {
                             editor.audition(string: string, fret: fret)
                         }
                         .frame(width: min(798, max(160, geometry.size.width - 356)))
+                        .allowsHitTesting(editor.canEdit)
                         Divider()
                         ScorePerformanceGuideView(context: performanceTimeline.context(at: performanceTick),
                                                   voice: editor.voice, referenceKey: $performanceReferenceKey)
