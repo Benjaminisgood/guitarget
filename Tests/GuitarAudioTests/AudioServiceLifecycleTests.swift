@@ -1,5 +1,6 @@
 import XCTest
 import Combine
+import GuitarCore
 @testable import GuitarAudio
 
 @MainActor final class AudioServiceLifecycleTests: XCTestCase {
@@ -58,6 +59,35 @@ import Combine
         XCTAssertFalse(service.isCapturing)
         XCTAssertNil(service.pitchFrame)
         XCTAssertEqual(service.inputLevel, 0)
+        withExtendedLifetime(subscription) {}
+    }
+    private func chord(_ label: PitchClass, at timestamp: Double) -> ChordFrame {
+        ChordFrame(timestamp: timestamp, chord: .chord(ChordDefinition(root: label, kind: .major), bass: nil), confidence: 0.98, fit: 0.97, heldDuration: 0.3)
+    }
+    func testChordFramesFollowTheSameGenerationRulesAndPublishChangesImmediately() async {
+        let service = makeCapturingService()
+        let oldGeneration = service.captureGeneration
+        var judged: [ChordFrame] = []
+        let subscription = service.chordFrames.sink { judged.append($0) }
+        let queued = Task { @MainActor in service.receiveChordFrame(self.chord(.a, at: 1), generation: oldGeneration) }
+        service.stopCapture()
+        service.markCaptureStarted()
+        let first = chord(.c, at: 2)
+        service.receiveChordFrame(first, generation: service.captureGeneration)
+        // Same symbol 20 ms later: scored, but the presentation copy is throttled.
+        var held = first; held.timestamp = 2.02; held.heldDuration = 0.32
+        service.receiveChordFrame(held, generation: service.captureGeneration)
+        XCTAssertEqual(service.chordFrame, first)
+        // A new symbol is shown at once, and silence clears the display without a scored frame.
+        let next = chord(.g, at: 2.04)
+        service.receiveChordFrame(next, generation: service.captureGeneration)
+        XCTAssertEqual(service.chordFrame, next)
+        service.receiveChordFrame(nil, generation: service.captureGeneration)
+        XCTAssertNil(service.chordFrame)
+        await queued.value
+        XCTAssertEqual(judged, [first, held, next])
+        service.stopCapture()
+        XCTAssertNil(service.chordFrame)
         withExtendedLifetime(subscription) {}
     }
     func testRunningInputConfigurationChangeStopsCaptureWithSpecificReason() {

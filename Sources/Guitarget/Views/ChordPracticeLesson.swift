@@ -33,7 +33,7 @@ struct ChordPracticeLesson: View {
                 }
             }
             if !session.results.isEmpty { results }
-            Text("逐弦判定使用 YIN 单音音高：每弦重新起音，音准 ±25 音分并稳定 120 ms。它不识别整和弦，不判断实际按在哪根弦，也不评价扫弦质量。麦克风练习建议戴耳机；拨下一根前请消掉前一根的余音。")
+            Text("逐弦判定使用 YIN 单音音高：每弦重新起音，音准 ±25 音分并稳定 120 ms；它不判断实际按在哪根弦。整和弦判定使用复音和弦识别：扫弦后识别出的根音与性质需与目标一致并持续 0.3 秒，转位或低音不同只作提示。两种自动判定都不评价扫弦质量。麦克风练习建议戴耳机；逐弦判定时拨下一根前请消掉前一根的余音。")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .onReceive(timer) { _ in tick() }
@@ -41,6 +41,10 @@ struct ChordPracticeLesson: View {
             session.setAudioContext(capturing: audio.isCapturing, playbackBlocking: audio.isPlaying || audio.isPaused, at: hostTime())
             session.consume(PitchObservation(timestamp: frame.timestamp, frequency: frame.frequency, cents: frame.cents,
                                              confidence: frame.confidence, rms: frame.rms, isStable: frame.isStable, onsetTimestamp: frame.onsetTimestamp))
+        }
+        .onReceive(audio.chordFrames) { frame in
+            session.setAudioContext(capturing: audio.isCapturing, playbackBlocking: audio.isPlaying || audio.isPaused, at: hostTime())
+            session.consume(frame)
         }
         .onDisappear { finish() }
         .alert("无法开始练习", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
@@ -53,7 +57,7 @@ struct ChordPracticeLesson: View {
             HStack(spacing: 20) {
                 Picker("训练方式", selection: $style) { ForEach(ChordPracticeStyle.allCases) { Text($0.title).tag($0) } }
                     .pickerStyle(.segmented).frame(maxWidth: 440)
-                Picker("判定方式", selection: $assessment) { ForEach(ChordPracticeAssessment.allCases) { Text($0.title).tag($0) } }.frame(width: 215)
+                Picker("判定方式", selection: $assessment) { ForEach(ChordPracticeAssessment.allCases) { Text($0.title).tag($0) } }.frame(width: 240)
                 Spacer()
             }
             VStack(alignment: .leading, spacing: 8) {
@@ -77,12 +81,19 @@ struct ChordPracticeLesson: View {
                 if style == .memory { Stepper("记忆 \(memorySeconds) 秒", value: $memorySeconds, in: 2...20).frame(width: 170) }
                 Spacer()
             }
-            Text(assessment == .singleNotes ? "由粗弦到细弦逐根拨弦（6→1，跳过消音弦）；只记录单音是否通过，最后由你自评和弦。" : "弹完整和弦后自评。此方式始终不进行自动和弦评分。")
-                .font(.caption).foregroundStyle(.secondary)
+            Text(assessmentCaption).font(.caption).foregroundStyle(.secondary)
         }
         .disabled(session.isActive || isPreparing)
         .overlay(alignment: .topTrailing) {
             if session.isActive || isPreparing { Button(isPreparing ? "取消准备" : "结束这一组", action: finish).padding(16) }
+        }
+    }
+
+    private var assessmentCaption: String {
+        switch assessment {
+        case .singleNotes: return "由粗弦到细弦逐根拨弦（6→1，跳过消音弦）；只记录单音是否通过，最后由你自评和弦。"
+        case .wholeChord: return "扫响整个和弦并保持；识别出的根音与和弦性质与目标一致并持续 0.3 秒即通过。低音不同会提示转位，最后仍由你自评。"
+        case .selfAssessment: return "弹完整和弦后自评。此方式不进行自动评分。"
         }
     }
 
@@ -156,18 +167,30 @@ struct ChordPracticeLesson: View {
                 Text(session.playbackBlocking ? "当前有示范或其他模块播放，自动判定暂停。" : !session.captureEnabled ? "采集已关闭。可手动继续或直接自评；启用采集后自动恢复单音检查。" : session.diagramVisible ? session.engine.status : "等待新的单音起音，并保持音准稳定。")
                     .font(.callout).foregroundStyle(.secondary)
                 Button("此弦手动继续（不算通过）") { session.skipString(at: hostTime()) }.disabled(session.playbackBlocking)
+            } else if session.assessment == .wholeChord {
+                Text(session.diagramVisible ? "扫响 \(card.chord.name)，保持 0.3 秒" : "扫响整个和弦，保持 0.3 秒").font(.title2.bold())
+                if let live = audio.chordFrame, live.chord != .none, session.canConsumeChords {
+                    Text("正在听到：\(live.label) · \(live.chord.kindTitle) · 已持续 \(String(format: "%.1f", live.heldDuration)) 秒")
+                        .font(.headline).foregroundStyle(.orange).monospacedDigit()
+                }
+                if let heard = session.recognition { Text(heard.description).font(.callout).foregroundStyle(.secondary) }
+                Text(session.playbackBlocking ? "当前有示范或其他模块播放，自动判定暂停。" : !session.captureEnabled ? "采集已关闭。可手动继续或直接自评；启用采集后自动恢复和弦识别。" : "需要提示之后的新一次扫弦；示范余音不计入。识别有约半秒延迟，请让和弦响够。")
+                    .font(.callout).foregroundStyle(.secondary)
+                Button("手动继续（不算通过）") { session.skipRecognition(at: hostTime()) }.disabled(session.playbackBlocking)
             } else {
                 Text("弹完整和弦，再自行评价。").font(.title2.bold())
-                Text("这里不会把 YIN 检出的某一个音当作整个和弦的识别结果。没有启用采集也可以完成训练。")
+                Text("此方式不进行自动识别或评分；需要自动判定请选择“整和弦识别判定”。没有启用采集也可以完成训练。")
                     .foregroundStyle(.secondary)
             }
         case .review:
             Text("揭晓：\(card.chord.name)").font(.title2.bold())
             if session.assessment == .singleNotes {
                 Text("逐弦自动通过 \(session.engine.results.filter { $0.outcome == .correct }.count) / \(card.notes.count) · 手动跳过 \(session.engine.results.filter { $0.outcome == .manual }.count)")
+            } else if session.assessment == .wholeChord {
+                Text(session.recognition.map { $0.matchesTarget ? "整和弦识别通过 · \($0.description)" : "手动继续 · 最后\($0.description)" } ?? "手动继续 · 未识别到目标和弦")
             }
             if let result = session.currentResult { Text("自评：\(result.rating.title)\(result.usedHint ? " · 使用了提示" : "")").foregroundStyle(.secondary) }
-            else { Text("单音检查完成。请再自行判断和弦整体是否清晰。") }
+            else { Text(session.assessment == .wholeChord ? "自动识别完成。请再自行判断按弦与扫弦是否清晰。" : "单音检查完成。请再自行判断和弦整体是否清晰。") }
         default: EmptyView()
         }
     }
@@ -176,20 +199,32 @@ struct ChordPracticeLesson: View {
         LearningCard(title: "本组记录 · 自动结果与自评分开", icon: "list.bullet.clipboard") {
             HStack(spacing: 26) {
                 Text("完成 \(session.results.count) 轮").font(.headline)
-                Text("单音自动通过 \(session.results.reduce(0) { $0 + $1.automaticallyPassed }) 根")
+                if session.results.contains(where: { $0.assessment == .singleNotes }) {
+                    Text("单音自动通过 \(session.results.reduce(0) { $0 + $1.automaticallyPassed }) 根")
+                }
+                if session.results.contains(where: { $0.assessment == .wholeChord }) {
+                    Text("整和弦识别通过 \(session.results.filter(\.recognisedCorrectly).count) 轮")
+                }
                 Text("自评熟练 \(session.results.filter { $0.rating == .confident }.count) 轮")
                 Spacer()
             }
             ForEach(session.results) { result in
                 HStack {
                     Text(result.card.chord.name).font(.headline).frame(width: 85, alignment: .leading)
-                    Text(result.assessment == .selfAssessment ? "扫弦自评 · 未进行自动评分" : "单音自动通过 \(result.automaticallyPassed)/\(result.card.notes.count) · 手动跳过 \(result.manuallySkipped)")
-                        .foregroundStyle(.secondary)
+                    Text(automaticSummary(result)).foregroundStyle(.secondary)
                     Spacer()
                     if result.usedHint { Text("使用提示").font(.caption).foregroundStyle(.secondary) }
                     Text("自评：\(result.rating.title)")
                 }.font(.callout)
             }
+        }
+    }
+
+    private func automaticSummary(_ result: ChordPracticeRoundResult) -> String {
+        switch result.assessment {
+        case .singleNotes: return "单音自动通过 \(result.automaticallyPassed)/\(result.card.notes.count) · 手动跳过 \(result.manuallySkipped)"
+        case .wholeChord: return result.recognition.map { $0.matchesTarget ? "整和弦识别通过 · 听到 \($0.heard.label)" : "手动继续 · 最后听到 \($0.heard.label)" } ?? "手动继续 · 未识别到目标"
+        case .selfAssessment: return "扫弦自评 · 未进行自动评分"
         }
     }
 

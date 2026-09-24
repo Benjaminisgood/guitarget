@@ -13,13 +13,16 @@ private final class CaptureAnalyzer: @unchecked Sendable {
     private var timer: DispatchSourceTimer?
     private var tracker = PitchTracker()
     private var onset = OnsetDetector()
+    /// Built lazily for the capture's actual sample rate; it owns its own longer window.
+    private var chords: ChordTracker?
     private var rolling: [Float] = []
     private var sinceAnalysis = 0
     private var lastRate = 0.0
     var deliver: ((PitchFrame?, Double, Int) -> Void)?
+    var deliverChord: ((ChordFrame?, Int) -> Void)?
     func start(generation: Int) {
         stop()
-        queue.sync { tracker = PitchTracker(); onset = OnsetDetector(); rolling.removeAll(keepingCapacity: true); sinceAnalysis = 0; lastRate = 0; ring.clear() }
+        queue.sync { tracker = PitchTracker(); onset = OnsetDetector(); chords = nil; rolling.removeAll(keepingCapacity: true); sinceAnalysis = 0; lastRate = 0; ring.clear() }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: .milliseconds(12), leeway: .milliseconds(2))
         // Each timer retains its own generation, including a callback already in flight
@@ -31,10 +34,14 @@ private final class CaptureAnalyzer: @unchecked Sendable {
     private func process(generation: Int) {
         guard let (samples, start) = ring.read(maximum: 8192) else { return }
         let rate = ring.sampleRate.load(ordering: .relaxed)
-        if lastRate != rate { rolling.removeAll(keepingCapacity: true); tracker = PitchTracker(); onset = OnsetDetector(); lastRate = rate }
+        if lastRate != rate { rolling.removeAll(keepingCapacity: true); tracker = PitchTracker(); onset = OnsetDetector(); chords = nil; lastRate = rate }
         for offset in stride(from: 0, to: samples.count, by: 128) {
             _ = onset.process(samples[offset..<min(offset + 128, samples.count)], sampleRate: rate, startTime: start + Double(offset) / rate)
         }
+        // Chord analysis runs beside pitch tracking on the same queue at its own hop, so the
+        // monophonic path keeps its cadence and neither touches the real-time callback.
+        if chords == nil { chords = ChordTracker(sampleRate: rate) }
+        for frame in chords!.consume(samples, startTime: start, onsetTimestamp: onset.onsetTimestamp) { deliverChord?(frame, generation) }
         rolling.append(contentsOf: samples); sinceAnalysis += samples.count
         let windowSize = rate >= 40000 ? 4096 : 2048
         if rolling.count > windowSize { rolling.removeFirst(rolling.count - windowSize) }
@@ -59,6 +66,10 @@ private final class CaptureAnalyzer: @unchecked Sendable {
     /// Every analyzed non-silent frame, at analysis cadence; scoring must subscribe here.
     public let pitchFrames = PassthroughSubject<PitchFrame, Never>()
     @Published public private(set) var pitchFrame: PitchFrame?
+    /// Every analysed chord window loud enough to decode, about 23 per second; judgement must subscribe here.
+    public let chordFrames = PassthroughSubject<ChordFrame, Never>()
+    /// Presentation copy: published on every change of chord and otherwise at most 10 Hz; nil while silent.
+    @Published public private(set) var chordFrame: ChordFrame?
     @Published public private(set) var inputLevel = 0.0
     @Published public private(set) var status = "音频就绪 · 采集已关闭"
     @Published public private(set) var inputDevices: [AudioDevice] = []
@@ -144,6 +155,7 @@ private final class CaptureAnalyzer: @unchecked Sendable {
     private var monitorCounter = 0
     private(set) var captureGeneration = 0
     private var lastPitchUIUpdate = 0.0
+    private var lastChordUIUpdate = 0.0
     private var captureStartedAt = 0.0
     private var lastCaptureCount = 0
     private var lastDefaultOutput: AudioObjectID = 0
@@ -192,6 +204,20 @@ private final class CaptureAnalyzer: @unchecked Sendable {
     private func configureAnalyzerDelivery() {
         analyzer.deliver = { [weak self] frame, rms, generation in
             Task { @MainActor in self?.receiveCaptureFrame(frame, rms: rms, generation: generation) }
+        }
+        analyzer.deliverChord = { [weak self] frame, generation in
+            Task { @MainActor in self?.receiveChordFrame(frame, generation: generation) }
+        }
+    }
+    func receiveChordFrame(_ frame: ChordFrame?, generation: Int) {
+        guard isCapturing, generation == captureGeneration else { return }
+        if let frame { chordFrames.send(frame) }
+        guard isCapturing, generation == captureGeneration else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        // A changed symbol shows immediately; otherwise the UI copy follows the pitch throttle.
+        if frame?.chord != chordFrame?.chord || now - lastChordUIUpdate >= 0.1 {
+            if chordFrame != frame { chordFrame = frame }
+            lastChordUIUpdate = now
         }
     }
     func receiveCaptureFrame(_ frame: PitchFrame?, rms: Double, generation: Int) {
@@ -530,7 +556,7 @@ private final class CaptureAnalyzer: @unchecked Sendable {
         inputStartTimeout?.invalidate(); inputStartTimeout = nil
     }
     func markCaptureStarted() {
-        isStartingCapture = false; isCapturing = true; captureStartedAt = ProcessInfo.processInfo.systemUptime; lastPitchUIUpdate = 0
+        isStartingCapture = false; isCapturing = true; captureStartedAt = ProcessInfo.processInfo.systemUptime; lastPitchUIUpdate = 0; lastChordUIUpdate = 0
         lastCaptureCount = analyzer.ring.writeIndex.load(ordering: .relaxed); captureIdleChecks = 0
     }
     public func stopCapture() {
@@ -541,7 +567,7 @@ private final class CaptureAnalyzer: @unchecked Sendable {
         inputTapInstalled = false; inputCaptureFormat = nil
         inputEngine = nil; activeInputDevice = 0; processTap?.cancel(); processTap = nil; analyzer.stop()
         systemInspectionPending = false; systemCaptureDiagnostics = [:]
-        isStartingCapture = false; isCapturing = false; pitchFrame = nil; inputLevel = 0; lastPitchUIUpdate = 0
+        isStartingCapture = false; isCapturing = false; pitchFrame = nil; chordFrame = nil; inputLevel = 0; lastPitchUIUpdate = 0; lastChordUIUpdate = 0
         if !isPlaying { status = "采集已关闭 · 可继续编辑与试听" }
     }
     private func update() {

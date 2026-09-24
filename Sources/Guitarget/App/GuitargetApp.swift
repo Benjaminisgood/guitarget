@@ -115,6 +115,13 @@ final class GuitargetAppDelegate: NSObject, NSApplicationDelegate {
                 NSLog("Guitarget microphone restart smoke: %@", String(describing: result["passed"]))
             }
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--chord-recognition-smoke"), CommandLine.arguments.indices.contains(index+1) {
+            let directory = URL(fileURLWithPath: CommandLine.arguments[index+1], isDirectory: true)
+            Task { @MainActor in
+                let result = await runChordRecognitionSmoke(outputDirectory: directory)
+                NSLog("Guitarget chord recognition smoke: %@", String(describing: result["passed"]))
+            }
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--guitar-capture"), CommandLine.arguments.indices.contains(index+1) {
             let directory = URL(fileURLWithPath: CommandLine.arguments[index+1], isDirectory: true)
             Task { @MainActor in

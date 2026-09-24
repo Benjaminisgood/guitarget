@@ -68,6 +68,11 @@ struct AudioStatusBar: View {
                 Text(audio.isPaused ? "已暂停" : "播放中").foregroundStyle(.secondary)
                 Button { audio.stop() } label:{ Image(systemName:"stop.fill") }.buttonStyle(.borderless).help("停止全部播放")
             }
+            // Dyads and chords only; a single note is already shown by the pitch readout.
+            if let chord = audio.chordFrame, chord.chord.pitchClasses.count >= 2 {
+                Text(chord.label).font(.system(size:13,weight:.bold,design:.rounded)).foregroundStyle(chord.isStable ? .orange : .secondary)
+                    .help("识别到的和弦 · \(chord.chord.kindTitle)")
+            }
             if let frame = audio.pitchFrame {
                 Text("\(frame.noteName)\(frame.octave)").font(.system(size:15,weight:.bold,design:.rounded))
                 Text(String(format:"%.1f Hz  %+.0f ¢",frame.frequency,frame.cents)).monospacedDigit().foregroundStyle(abs(frame.cents)<10 ? .green:.secondary)

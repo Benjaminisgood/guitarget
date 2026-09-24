@@ -9,9 +9,28 @@ public enum ChordPracticeStyle: String, CaseIterable, Identifiable, Sendable {
 }
 
 public enum ChordPracticeAssessment: String, CaseIterable, Identifiable, Sendable {
-    case singleNotes, selfAssessment
+    case singleNotes, wholeChord, selfAssessment
     public var id: String { rawValue }
-    public var title: String { self == .singleNotes ? "逐弦单音判定" : "扫弦自评" }
+    public var title: String {
+        switch self { case .singleNotes: return "逐弦单音判定"; case .wholeChord: return "整和弦识别判定"; case .selfAssessment: return "扫弦自评" }
+    }
+}
+
+/// What the chord recogniser heard for one round. `matchesTarget` compares root and quality
+/// only; the bass is reported separately so an inverted grip is feedback, not a failure.
+public struct ChordRecognitionOutcome: Equatable, Sendable {
+    public let heard: RecognizedChord
+    public let matchesTarget: Bool
+    public let heldDuration: Double
+    public let timestamp: Double
+    public init(heard: RecognizedChord, matchesTarget: Bool, heldDuration: Double, timestamp: Double) {
+        self.heard = heard; self.matchesTarget = matchesTarget; self.heldDuration = heldDuration; self.timestamp = timestamp
+    }
+    public var description: String {
+        guard matchesTarget else { return "识别为 \(heard.label)，与目标不同" }
+        if let bass = heard.bass { return "识别为 \(heard.label) · 根音与性质正确，低音是 \(bass.displayName)" }
+        return "识别为 \(heard.label) · 与目标一致"
+    }
 }
 
 public enum ChordSelfRating: String, CaseIterable, Identifiable, Sendable {
@@ -83,15 +102,20 @@ public struct ChordPracticeRoundResult: Identifiable, Sendable {
     public let card: ChordPracticeCard
     public let assessment: ChordPracticeAssessment
     public let automaticResults: [PracticeResult]
+    /// Whole-chord recognition when that assessment was used; nil means the round was continued by hand.
+    public let recognition: ChordRecognitionOutcome?
     public let rating: ChordSelfRating
     public let usedHint: Bool
     public let completedAt: Double
     public var automaticallyPassed: Int { automaticResults.filter { $0.outcome == .correct }.count }
     public var manuallySkipped: Int { automaticResults.filter { $0.outcome == .manual }.count }
+    public var recognisedCorrectly: Bool { recognition?.matchesTarget == true }
 }
 
-/// Chord practice is deliberately a sequence of monophonic targets. Passing all
-/// strings does not measure simultaneous chord clarity, fingering, or strumming.
+/// Single-note assessment is a sequence of monophonic targets and does not measure the
+/// simultaneous chord. Whole-chord assessment listens to the polyphonic recogniser instead:
+/// it passes when the decoded root and quality match the card and are held briefly after a
+/// fresh strum. Neither judges fingering comfort or strumming evenness; self-rating stays separate.
 public struct ChordPracticeSession: Sendable {
     public private(set) var cards: [ChordPracticeCard] = []
     public private(set) var index = 0
@@ -105,6 +129,10 @@ public struct ChordPracticeSession: Sendable {
     public private(set) var playbackBlocking = false
     public private(set) var memoryDeadline: Double?
     public private(set) var notice = ""
+    /// Latest whole-chord recognition of the current round; a match ends the round.
+    public private(set) var recognition: ChordRecognitionOutcome?
+    /// A decoded chord must be held this long after a fresh strum before it counts.
+    public var requiredChordHold = 0.3
     private var memorySeconds: Double = 5
     private var beforeDemonstration: ChordPracticePhase?
     private var acceptFramesAfter = Double.infinity
@@ -115,6 +143,7 @@ public struct ChordPracticeSession: Sendable {
     public var isActive: Bool { ![.idle, .finished].contains(phase) }
     public var diagramVisible: Bool { phase == .memorizing || phase == .review || usedHint || (style == .diagram && [.performing, .listening].contains(phase)) }
     public var canConsume: Bool { phase == .performing && assessment == .singleNotes && captureEnabled && !playbackBlocking }
+    public var canConsumeChords: Bool { phase == .performing && assessment == .wholeChord && captureEnabled && !playbackBlocking }
 
     public mutating func start(cards: [ChordPracticeCard], style: ChordPracticeStyle, assessment: ChordPracticeAssessment, memorySeconds: Double = 5, at timestamp: Double) {
         self.cards = cards; self.style = style; self.assessment = assessment
@@ -123,7 +152,7 @@ public struct ChordPracticeSession: Sendable {
     }
 
     private mutating func prepareRound(at timestamp: Double) {
-        usedHint = false; notice = ""; memoryDeadline = nil; beforeDemonstration = nil; engine = PracticeEngine()
+        usedHint = false; notice = ""; memoryDeadline = nil; beforeDemonstration = nil; engine = PracticeEngine(); recognition = nil
         guard currentCard != nil else { phase = .finished; return }
         switch style {
         case .diagram: beginPerforming(at: timestamp)
@@ -145,12 +174,13 @@ public struct ChordPracticeSession: Sendable {
     }
 
     public mutating func setAudioContext(capturing: Bool, playbackBlocking: Bool, at timestamp: Double) {
-        let wasAvailable = canConsume
+        let wasAvailable = canConsume || canConsumeChords
         captureEnabled = capturing; self.playbackBlocking = playbackBlocking
         if phase == .performing, assessment == .singleNotes {
             engine.setDemonstrating(!canConsume, at: timestamp)
             if canConsume && !wasAvailable { acceptFramesAfter = timestamp }
         }
+        if phase == .performing, assessment == .wholeChord, canConsumeChords, !wasAvailable { acceptFramesAfter = timestamp }
     }
 
     public mutating func beginDemonstration(at timestamp: Double) {
@@ -186,6 +216,25 @@ public struct ChordPracticeSession: Sendable {
         if engine.isFinished { phase = .review }
     }
 
+    /// Whole-chord assessment. Frames analysed before the prompt, or without a strum after
+    /// it, never count; demonstration tails therefore cannot pass a round. A wrong chord held
+    /// as long as a right one is kept as feedback and the round waits for another strum.
+    public mutating func consume(_ frame: ChordFrame) {
+        guard canConsumeChords, let card = currentCard, frame.timestamp >= acceptFramesAfter,
+              let onset = frame.onsetTimestamp, onset >= acceptFramesAfter, onset <= frame.timestamp else { return }
+        guard frame.chord.pitchClasses.count >= 2, frame.heldDuration >= requiredChordHold - 0.0000001 else { return }
+        let matches = frame.chord.definition == card.chord
+        recognition = ChordRecognitionOutcome(heard: frame.chord, matchesTarget: matches, heldDuration: frame.heldDuration, timestamp: frame.timestamp)
+        if matches { phase = .review }
+    }
+
+    /// Continue a whole-chord round by hand. The last chord heard stays as feedback; the round
+    /// is recorded as continued manually, never as a pass.
+    public mutating func skipRecognition(at timestamp: Double) {
+        guard phase == .performing, assessment == .wholeChord, !playbackBlocking else { return }
+        acceptFramesAfter = timestamp; phase = .review
+    }
+
     public mutating func skipString(at timestamp: Double) {
         guard phase == .performing, assessment == .singleNotes, !playbackBlocking else { return }
         // A closed capture source must still allow a clearly marked manual skip.
@@ -198,7 +247,8 @@ public struct ChordPracticeSession: Sendable {
 
     public mutating func rate(_ rating: ChordSelfRating, at timestamp: Double) {
         guard [.performing, .review].contains(phase), currentResult == nil, let card = currentCard else { return }
-        results.append(ChordPracticeRoundResult(card: card, assessment: assessment, automaticResults: engine.results, rating: rating, usedHint: usedHint, completedAt: timestamp))
+        results.append(ChordPracticeRoundResult(card: card, assessment: assessment, automaticResults: engine.results,
+                                                recognition: assessment == .wholeChord ? recognition : nil, rating: rating, usedHint: usedHint, completedAt: timestamp))
         engine.stop(); phase = .review
     }
 

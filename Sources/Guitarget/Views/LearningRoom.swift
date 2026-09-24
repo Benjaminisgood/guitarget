@@ -5,7 +5,7 @@ import GuitarCore
 
 enum LearningSection: String, CaseIterable, Identifiable {
     case fretboard = "指板", scales = "音阶", caged = "CAGED", triads = "三和弦"
-    case chords = "和弦库", tuner = "调音器", ensemble = "合奏", chordPractice = "和弦练习", scores = "曲谱"
+    case chords = "和弦库", tuner = "调音器", chordRecognition = "和弦识别", ensemble = "合奏", chordPractice = "和弦练习", scores = "曲谱"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -15,6 +15,7 @@ enum LearningSection: String, CaseIterable, Identifiable {
         case .triads: return "triangle"
         case .chords: return "rectangle.grid.3x2"
         case .tuner: return "tuningfork"
+        case .chordRecognition: return "music.quarternote.3"
         case .ensemble: return "waveform"
         case .chordPractice: return "ear.badge.checkmark"
         case .scores: return "doc.richtext"
@@ -28,6 +29,7 @@ enum LearningSection: String, CaseIterable, Identifiable {
         case .triads: return "听见调内和声"
         case .chords: return "查找适合的按法"
         case .tuner: return "听准每一根弦"
+        case .chordRecognition: return "听出你弹的和弦"
         case .ensemble: return "跟着和声即兴"
         case .chordPractice: return "看、听、记住和弦"
         case .scores: return "写下你的音乐"
@@ -71,6 +73,7 @@ struct LearningRoom: View {
                         case .triads: TriadsLesson(audio: audio)
                         case .chords: ChordLibraryLesson(audio: audio)
                         case .tuner: TunerLesson(audio: audio)
+                        case .chordRecognition: ChordRecognitionLesson(audio: audio)
                         case .ensemble: EnsembleLesson(audio: audio)
                         case .chordPractice: ChordPracticeLesson(audio: audio)
                         case .scores: ScoreLibraryView()

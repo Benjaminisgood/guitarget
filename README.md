@@ -1,6 +1,6 @@
 # Guitarget
 
-纯 Swift 原生 macOS 吉他学习、双声部六线谱与歌词编辑、本地曲库、钢弦吉他合成和单音跟练。SwiftUI / AppKit、AVAudioEngine、CoreAudio process tap；无 WebView、Python、外部运行时或第三方包。曲库无需联网，Apple Music 链接交给系统“音乐”应用打开。
+纯 Swift 原生 macOS 吉他学习、双声部六线谱与歌词编辑、本地曲库、钢弦吉他合成、单音跟练和复音和弦识别。SwiftUI / AppKit、AVAudioEngine、CoreAudio process tap；无 WebView、Python、外部运行时、第三方包或训练模型。曲库无需联网，Apple Music 链接交给系统“音乐”应用打开。
 
 ## 构建与启动
 
@@ -28,8 +28,9 @@
 - **三和弦**：选择大调及 I–vii°，在所选大调指型内显示和弦根、三、五音，试听并生成练习谱。
 - **和弦库**：12 根音与 15 种和弦类型组合，按品位、跨度、发声弦数、转位、空弦与横按条件计算候选按法，分页查看、逐音或扫弦试听。
 - **调音器**：色度、自动目标弦和锁弦；七种调弦预设、400–480 Hz A4 基准、参考音、稳定性与近期偏差历史。预设只用于调音器，不更改曲谱调弦。
+- **和弦识别**：扫一个和弦，实时显示和弦名（含 C/E 之类的转位低音）、构成音、分解出的各个音、十二音级能量、整体音准偏差和候选；15 种和弦性质 × 12 根音，另有强力和弦、单音与“无和弦”。窗口底部状态栏同时显示当前和弦。
 - **合奏**：四种原创双声部吉他伴奏，支持转调、速度、循环、小节定位和预备拍；按当前和弦显示推荐音，并可生成单音练习谱。
-- **和弦练习**：看图、听示范后复现、限时记忆。逐弦自动检查单音，完整扫弦由用户自评；两种结果分别记录。
+- **和弦练习**：看图、听示范后复现、限时记忆。可选逐弦单音判定、整和弦识别判定（扫弦后识别出的根音与性质与目标一致并持续 0.3 秒即通过）或纯自评；自动结果与自评分别记录。
 - **曲谱**：原生新建、打开和最近文档；“我的曲库”弹窗管理自己的曲谱、歌词和原声。
 
 ## 我的曲库、歌词与原声
@@ -65,16 +66,16 @@
 | 路径 | 职责 |
 | --- | --- |
 | `Sources/GuitarCore` | 乐理、唯一 GuitarScore 模型、ticks、校验、延音调度、跟练状态机 |
-| `Sources/GuitarAudio` | 六弦 DSP、音频时钟、采集设备、process tap、YIN、PitchFrame |
+| `Sources/GuitarAudio` | 六弦 DSP、音频时钟、采集设备、process tap、YIN、PitchFrame、自研 FFT / NNLS 和弦识别、ChordFrame |
 | `Sources/Guitarget` | SwiftUI 场景、原生文档、Canvas 六线谱、小型键盘桥接 |
 | `Tests` | 乐理、文档、调度、识别与练习回归 |
 | `Examples` | 直接打开的指弹、F 大调及技巧曲谱，以及 Swift 生成脚本 |
 
 `.guitarget` 是版本化 JSON，四分音符恒为 **960 ticks**；不以浮点秒保存谱面。AI 可按 [格式说明](docs/score-format.md) 直接生成。另见 [乐理与判定约定](docs/theory-and-practice.md)、[编辑器说明](docs/editor.md)、[音频实现](docs/audio.md) 和 [验收记录](docs/acceptance.md)。
 
-应用只实现本地六弦吉他与单音评分；无多乐器轨、Guitar Pro 导入、自动转谱或复音和弦评分。
+应用只实现本地六弦吉他、单音评分与整和弦识别判定；无多乐器轨、Guitar Pro 导入、自动转谱或逐音复音转录评分。和弦识别的算法与验证范围见 [音频实现](docs/audio.md)。
 
-四个新增学习栏目详见 [和弦、调音与合奏指南](docs/learning-expansion.md)。
+五个学习栏目（和弦库、调音器、和弦识别、合奏、和弦练习）详见 [和弦、调音与合奏指南](docs/learning-expansion.md)。
 
 ## 开发诊断
 

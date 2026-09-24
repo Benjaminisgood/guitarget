@@ -127,6 +127,87 @@ final class ChordPracticeTests: XCTestCase {
         XCTAssertEqual(session.results.count, 2)
     }
 
+    private func chordFrame(_ chord: RecognizedChord, at time: Double, held: Double, onset: Double) -> ChordFrame {
+        ChordFrame(timestamp: time, chord: chord, confidence: 0.97, fit: 0.95, heldDuration: held, onsetTimestamp: onset)
+    }
+
+    func testWholeChordAssessmentPassesOnlyForAFreshHeldMatchAndKeepsWrongChordsAsFeedback() {
+        var session = ChordPracticeSession()
+        let card = card()
+        let target = RecognizedChord.chord(card.chord, bass: nil)
+        session.start(cards: [card], style: .diagram, assessment: .wholeChord, at: 10)
+        session.setAudioContext(capturing: true, playbackBlocking: false, at: 10)
+        XCTAssertTrue(session.canConsumeChords)
+        XCTAssertFalse(session.canConsume)
+        // A chord already ringing before the prompt, or analysed before it, never counts.
+        session.consume(chordFrame(target, at: 10.4, held: 0.6, onset: 9.9))
+        session.consume(chordFrame(target, at: 9.95, held: 0.6, onset: 9.9))
+        XCTAssertEqual(session.phase, .performing); XCTAssertNil(session.recognition)
+        // A fresh strum must be held for the required duration.
+        session.consume(chordFrame(target, at: 10.5, held: 0.1, onset: 10.3))
+        XCTAssertNil(session.recognition)
+        // A wrong chord held long enough is feedback, not a failure or a pass.
+        let wrong = RecognizedChord.chord(ChordDefinition(root: .a, kind: .minor), bass: nil)
+        session.consume(chordFrame(wrong, at: 10.8, held: 0.4, onset: 10.3))
+        XCTAssertEqual(session.phase, .performing)
+        XCTAssertEqual(session.recognition?.heard, wrong)
+        XCTAssertEqual(session.recognition?.matchesTarget, false)
+        XCTAssertEqual(session.recognition?.description, "识别为 Am，与目标不同")
+        // Single notes and silence carry no chord verdict.
+        session.consume(chordFrame(.singleNote(.c), at: 10.9, held: 0.5, onset: 10.3))
+        session.consume(chordFrame(.none, at: 10.95, held: 0.5, onset: 10.3))
+        XCTAssertEqual(session.recognition?.heard, wrong)
+        // The matching chord with a different bass passes and reports the inversion.
+        session.consume(chordFrame(.chord(card.chord, bass: .e), at: 11.6, held: 0.3, onset: 11.2))
+        XCTAssertEqual(session.phase, .review)
+        XCTAssertEqual(session.recognition?.matchesTarget, true)
+        XCTAssertEqual(session.recognition?.description, "识别为 C/E · 根音与性质正确，低音是 E")
+        XCTAssertTrue(session.results.isEmpty, "Recognition never replaces the separate self-rating")
+        session.rate(.confident, at: 12)
+        XCTAssertEqual(session.results.first?.recognisedCorrectly, true)
+        XCTAssertEqual(session.results.first?.recognition?.heard, .chord(card.chord, bass: .e))
+    }
+
+    func testWholeChordAssessmentIgnoresDemonstrationTailsCaptureLossAndManualContinueIsNotAPass() {
+        var session = ChordPracticeSession()
+        let card = card()
+        let target = RecognizedChord.chord(card.chord, bass: nil)
+        session.start(cards: [card, card], style: .listening, assessment: .wholeChord, at: 0)
+        session.setAudioContext(capturing: true, playbackBlocking: false, at: 0)
+        session.beginDemonstration(at: 0.1)
+        session.consume(chordFrame(target, at: 0.6, held: 0.4, onset: 0.15))
+        XCTAssertNil(session.recognition)
+        session.finishDemonstration(completed: true, at: 2)
+        XCTAssertEqual(session.phase, .performing)
+        session.consume(chordFrame(target, at: 2.3, held: 0.9, onset: 1.9))
+        XCTAssertEqual(session.phase, .performing, "the demonstration's own strum is not the user's")
+        session.setAudioContext(capturing: false, playbackBlocking: false, at: 2.5)
+        session.consume(chordFrame(target, at: 2.9, held: 0.4, onset: 2.6))
+        XCTAssertEqual(session.phase, .performing, "Closed capture cannot score")
+        session.setAudioContext(capturing: true, playbackBlocking: false, at: 3)
+        session.consume(chordFrame(target, at: 3.2, held: 0.4, onset: 2.8))
+        XCTAssertEqual(session.phase, .performing, "a strum before capture resumed does not count")
+        session.skipRecognition(at: 3.5)
+        XCTAssertEqual(session.phase, .review)
+        session.rate(.needsWork, at: 4)
+        XCTAssertEqual(session.results.first?.recognisedCorrectly, false)
+        XCTAssertNil(session.results.first?.recognition)
+        session.next(at: 5)
+        XCTAssertEqual(session.phase, .awaitingDemonstration)
+        session.skipPreparation(at: 5.1)
+        session.consume(chordFrame(target, at: 5.8, held: 0.35, onset: 5.4))
+        XCTAssertEqual(session.phase, .review)
+        XCTAssertEqual(session.recognition?.matchesTarget, true)
+        // Self assessment never consumes chord frames.
+        var passive = ChordPracticeSession()
+        passive.start(cards: [self.card()], style: .diagram, assessment: .selfAssessment, at: 0)
+        passive.setAudioContext(capturing: true, playbackBlocking: false, at: 0)
+        passive.consume(chordFrame(target, at: 1, held: 1, onset: 0.5))
+        XCTAssertEqual(passive.phase, .performing); XCTAssertNil(passive.recognition)
+        passive.rate(.confident, at: 2)
+        XCTAssertNil(passive.results.first?.recognition)
+    }
+
     func testAllStringsPassingStillRequiresSeparateSelfRating() {
         var session = ChordPracticeSession()
         let card = card()
