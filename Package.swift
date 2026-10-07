@@ -3,7 +3,8 @@ import PackageDescription
 
 let package = Package(
     name: "Guitarget",
-    platforms: [.macOS(.v15)],
+    // iOS 18 is the floor because GuitarAudio's lock-free DSP state uses Synchronization.Atomic.
+    platforms: [.macOS(.v15), .iOS(.v18)],
     products: [
         .library(name: "GuitarCore", targets: ["GuitarCore"]),
         .library(name: "GuitarAudio", targets: ["GuitarAudio"]),

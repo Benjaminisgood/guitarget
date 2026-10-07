@@ -76,8 +76,13 @@ struct AudioHardwareSnapshot: Sendable {
     var defaultInput: UInt32
     var defaultOutput: UInt32
     static func read() -> AudioHardwareSnapshot {
+#if os(macOS)
         AudioHardwareSnapshot(inputs: audioDevices(input: true), outputs: audioDevices(input: false), processes: audioProcesses(),
                               defaultInput: audioScalar(AudioObjectID(kAudioObjectSystemObject), selector: kAudioHardwarePropertyDefaultInputDevice, initial: UInt32(0)),
                               defaultOutput: audioScalar(AudioObjectID(kAudioObjectSystemObject), selector: kAudioHardwarePropertyDefaultOutputDevice, initial: UInt32(0)))
+#else
+        AudioHardwareSnapshot(inputs: audioDevices(input: true), outputs: audioDevices(input: false), processes: [],
+                              defaultInput: 0, defaultOutput: 0)
+#endif
     }
 }

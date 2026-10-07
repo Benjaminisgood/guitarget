@@ -110,17 +110,23 @@ private final class CaptureAnalyzer: @unchecked Sendable {
             let hardware = node.inputFormat(forBus: 0), client = node.outputFormat(forBus: 0)
             result["hardwareFormat"] = ["sampleRate": hardware.sampleRate, "channels": Int(hardware.channelCount)]
             result["clientFormat"] = ["sampleRate": client.sampleRate, "channels": Int(client.channelCount)]
+#if os(macOS)
             result["deviceSampleRate"] = audioScalar(activeInputDevice, selector: kAudioDevicePropertyNominalSampleRate, initial: 0.0)
+#endif
         }
         return result
     }
     /// Read back the device actually configured in the output AudioUnit.
     public var activeOutputDeviceID: UInt32? {
+#if os(macOS)
         guard let unit = outputEngine.outputNode.audioUnit else { return nil }
         var device: AudioObjectID = 0
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
         guard AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &device, &size) == noErr else { return nil }
         return device
+#else
+        nil
+#endif
     }
     public var selectedInputChannelCount: Int {
         let id = inputDeviceID == 0 ? defaultInputDeviceID : inputDeviceID
@@ -277,6 +283,9 @@ private final class CaptureAnalyzer: @unchecked Sendable {
             throw NSError(domain: "Guitarget.Playback", code: 1, userInfo: [NSLocalizedDescriptionKey: "播放已由其他音频接管。"])
         }
         do {
+#if os(iOS)
+            activateAudioSession(record: source == .input || source == .system)
+#endif
             if !outputEngine.isRunning { outputEngine.prepare(); try outputEngine.start() }
         } catch {
             playbackCoordinator.release(token: playbackToken)
@@ -292,10 +301,13 @@ private final class CaptureAnalyzer: @unchecked Sendable {
         isPaused = (wasPlaying || wasPaused) && playback.renderer != nil
         playback.renderer?.hostAnchor.store(-Double.infinity, ordering: .releasing)
         transportStartHostTime = nil
+#if os(macOS)
         var selected = id == 0 ? defaultOutputDeviceID : id
         guard let unit = outputEngine.outputNode.audioUnit else { status = "输出设备不可用" + (isPaused ? "；播放已暂停。" : ""); return }
         let result = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &selected, UInt32(MemoryLayout<AudioObjectID>.size))
         if result != noErr { status = "切换输出设备失败（CoreAudio \(result)）；请重新选择可用输出。" + (isPaused ? " 播放已暂停。" : ""); return }
+#endif
+        // iOS routes output through the system session, so only the selection is tracked here.
         outputDeviceID = id
         if wasPlaying && !wasPaused {
             do { try ensureOutput(); isPlaying = true; isPaused = false }
@@ -460,11 +472,17 @@ private final class CaptureAnalyzer: @unchecked Sendable {
     private func beginInputCapture(generation: Int) {
         guard captureGeneration == generation, source == .input else { return }
         do {
+#if os(macOS)
             let engine = AVAudioEngine(), node = engine.inputNode
             let selectedID = inputDeviceID == 0 ? defaultInputDeviceID : inputDeviceID
             var device = selectedID
             guard let unit = node.audioUnit else { throw AudioFailure(operation: "打开声音输入", code: kAudioHardwareBadDeviceError) }
             inputEngine = engine; activeInputDevice = selectedID
+#else
+            activateAudioSession(record: true)
+            let engine = AVAudioEngine()
+            inputEngine = engine
+#endif
             status = "正在协商声音输入格式…"
             // CurrentDevice can return before AVAudioEngine has adopted the device's format.
             // Observe first, and only install a tap once the hardware format is current.
@@ -479,6 +497,7 @@ private final class CaptureAnalyzer: @unchecked Sendable {
                     self.stopCapture(); self.status = "声音输入格式协商超时，采集未启动。请检查设备后重新开始。"
                 }
             }
+#if os(macOS)
             var currentDevice: AudioObjectID = 0
             var size = UInt32(MemoryLayout<AudioObjectID>.size)
             try audioCheck(AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &currentDevice, &size), "读取当前输入设备")
@@ -486,6 +505,7 @@ private final class CaptureAnalyzer: @unchecked Sendable {
             if currentDevice != selectedID {
                 try audioCheck(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &device, size), "选择输入设备")
             }
+#endif
             finishInputCaptureIfReady(generation: generation)
         } catch { stopCapture(); status = error.localizedDescription }
     }
@@ -496,6 +516,7 @@ private final class CaptureAnalyzer: @unchecked Sendable {
             stopCapture(); status = "麦克风权限发生变化；采集未启动。"; return
         }
         let node = engine.inputNode
+#if os(macOS)
         var currentDevice: AudioObjectID = 0
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
         let deviceResult = AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &currentDevice, &size)
@@ -507,6 +528,11 @@ private final class CaptureAnalyzer: @unchecked Sendable {
         // client format need not change until we configure it here.
         guard deviceResult == noErr, currentDevice == activeInputDevice, rate > 0,
               format.channelCount > 0, abs(format.sampleRate - rate) < 1 else { return }
+#else
+        let format = node.inputFormat(forBus: 0)
+        // iOS adopts the session rate immediately, so a non-empty hardware format means ready.
+        guard format.channelCount > 0, format.sampleRate > 0 else { return }
+#endif
         clearInputStartWait(removeObserver: false)
         isStartingCapture = false
         do {
@@ -535,10 +561,14 @@ private final class CaptureAnalyzer: @unchecked Sendable {
         if isStartingCapture { finishInputCaptureIfReady(generation: generation); return }
         let format = engine.inputNode.inputFormat(forBus: 0)
         let expected = inputCaptureFormat
+#if os(macOS)
         var device: AudioObjectID = 0
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
         let result = engine.inputNode.audioUnit.map { AudioUnitGetProperty($0, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &device, &size) }
         let formatMatches = result == noErr && device == activeInputDevice && expected?.sampleRate == format.sampleRate && expected?.channelCount == format.channelCount
+#else
+        let formatMatches = expected?.sampleRate == format.sampleRate && expected?.channelCount == format.channelCount
+#endif
         handleRunningInputConfigurationChange(generation: generation, engineIsRunning: engine.isRunning, formatMatches: formatMatches)
     }
     func handleRunningInputConfigurationChange(generation: Int, engineIsRunning: Bool, formatMatches: Bool) {
@@ -585,9 +615,11 @@ private final class CaptureAnalyzer: @unchecked Sendable {
         monitorCounter += 1
         guard monitorCounter >= 30 else { return }
         monitorCounter = 0; refreshDevices()
+#if os(macOS)
         if outputDeviceID != 0 && !outputDevices.contains(where: { $0.id == outputDeviceID }) {
             stop(); setOutputDevice(0); status = "输出设备已断开，已停止演奏并恢复系统默认输出。"
         }
+#endif
         guard isCapturing else { return }
         if source == .input && activeInputDevice != 0 && !inputDevices.contains(where: { $0.id == activeInputDevice }) {
             stopCapture(); status = "输入设备已断开；采集已停止。"; return
@@ -617,4 +649,20 @@ private final class CaptureAnalyzer: @unchecked Sendable {
             stopCapture(); status = "未收到音频帧，采集已停止。请检查设备，以及系统设置 → 隐私与安全性中的麦克风或屏幕与系统音频录制授权。"
         }
     }
+#if os(iOS)
+    /// iOS routes capture and playback through one session; recording needs .playAndRecord.
+    private func activateAudioSession(record: Bool) {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            if record {
+                try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
+            } else if session.category != .playback {
+                try session.setCategory(.playback, mode: .default)
+            }
+            try session.setActive(true)
+        } catch {
+            NSLog("Guitarget audio session configuration failed: %@", error.localizedDescription)
+        }
+    }
+#endif
 }

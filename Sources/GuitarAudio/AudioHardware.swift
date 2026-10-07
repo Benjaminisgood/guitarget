@@ -2,7 +2,9 @@ import Foundation
 import CoreAudio
 import AudioToolbox
 import AVFoundation
+#if canImport(AppKit)
 import AppKit
+#endif
 import Synchronization
 
 public struct AudioDevice: Identifiable, Equatable, Sendable {
@@ -38,6 +40,7 @@ func audioCheck(_ code: OSStatus, _ operation: String) throws {
     if code != noErr { throw AudioFailure(operation: operation, code: code) }
 }
 
+#if os(macOS)
 func audioIDs(_ selector: AudioObjectPropertySelector, object: AudioObjectID = AudioObjectID(kAudioObjectSystemObject), scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> [AudioObjectID] {
     var address = AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
     var size: UInt32 = 0
@@ -263,3 +266,32 @@ final class ProcessTapCapture: SystemTapBackend {
         if tapID != 0 { AudioHardwareDestroyProcessTap(tapID); tapID = 0 }
     }
 }
+#else
+/// iOS exposes no CoreAudio HAL object model, so device IDs are route positions.
+typealias AudioObjectID = UInt32
+
+func audioDevices(input: Bool) -> [AudioDevice] {
+    let session = AVAudioSession.sharedInstance()
+    let route = session.currentRoute
+    let ports = input ? route.inputs : route.outputs
+    let rate = session.sampleRate
+    return ports.enumerated().compactMap { index, description in
+        let channels = max(1, description.channels?.count ?? 1)
+        return AudioDevice(id: UInt32(index + 1), name: description.portName, channels: channels,
+                           nominalSampleRate: rate, transportType: 0)
+    }
+}
+func audioProcesses() -> [AudioProcess] { [] }
+
+/// Capturing another app's audio is a macOS process-tap feature; iOS only offers the microphone.
+final class ProcessTapCapture: SystemTapBackend {
+    init(ring: CaptureRing, cancellation: CaptureCancellation = CaptureCancellation()) {}
+    func start(process: AudioProcess?) throws {
+        throw NSError(domain: "Guitarget.Capture", code: 2,
+                      userInfo: [NSLocalizedDescriptionKey: "iOS 不支持系统声音采集，请改用声音输入（麦克风）。"])
+    }
+    func stop() {}
+    var diagnostics: [String: Any] { [:] }
+    var clockConfigurationChanged: Bool { false }
+}
+#endif
